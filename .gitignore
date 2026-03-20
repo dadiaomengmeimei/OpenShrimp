@@ -1,0 +1,39 @@
+# Environment variables (contains API keys)
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Node
+node_modules/
+.vite/
+
+# Data / Runtime
+data/
+backend/data/
+*.db
+*.sqlite
+*.sqlite3
+server.log
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test artifacts
+backend/apps/*/test_*.py
+
+# Generated outputs
+*.pptx
