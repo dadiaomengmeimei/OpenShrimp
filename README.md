@@ -261,7 +261,7 @@ Contributions of all types are more than welcome!
 
 ```bash
 # Fork & clone
-git clone https://github.com/<your-username>/openshrimp.git
+git clone https://github.com/dadiaomengmeimei/OpenShrimp.git
 
 # Create a branch
 git checkout -b feat/amazing-feature
