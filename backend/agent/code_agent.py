@@ -40,9 +40,9 @@ MAX_SKILLS_CHARS = 2000
 # Skills filename stored in each app directory
 SKILLS_FILENAME = "skills.json"
 # Context compression: compress conversation every N iterations to keep token budget manageable
-COMPRESS_EVERY_N = 8
+COMPRESS_EVERY_N = 5
 # Maximum conversation messages before forcing a compression
-MAX_MESSAGES_BEFORE_COMPRESS = 20
+MAX_MESSAGES_BEFORE_COMPRESS = 16
 
 # ─────────────────────────────────────────────────
 # Tool definitions (for OpenAI-standard function calling)
@@ -103,6 +103,40 @@ TOOLS_SPEC = [
                     "command": {"type": "string", "description": "Shell command to execute"}
                 },
                 "required": ["command"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit",
+            "description": "Replace a specific text snippet in a file with new content. Use this for targeted edits instead of rewriting the entire file with 'write'. The old_string must match exactly (including whitespace and indentation).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Path to the file to edit"},
+                    "old_string": {"type": "string", "description": "The exact text to find and replace (must match the file content exactly, including whitespace)"},
+                    "new_string": {"type": "string", "description": "The replacement text"}
+                },
+                "required": ["file_path", "old_string", "new_string"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_app_features",
+            "description": "Update the app's UI feature flags in the platform config. Use this to enable frontend capabilities like file upload. Available features: 'file_upload' (shows file upload button in chat UI). The features list replaces the current one.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "features": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of feature flags to enable. Available: 'file_upload'"
+                    }
+                },
+                "required": ["features"]
             }
         }
     },
@@ -264,15 +298,17 @@ Files modified: {', '.join(files_modified) if files_modified else '(none)'}
 
 def _build_system_prompt(cwd: str, skills_text: str = "") -> str:
     """Build the system prompt for the coding agent."""
-    base = f"""You are an expert coding agent for the OpenShrimp AI App Store platform.
+    base = """You are an expert coding agent for the OpenShrimp AI App Store platform.
 
 You have the following tools available:
 - **ls**: List files and directories
 - **read**: Read file content
 - **write**: Write/create files (creates parent dirs automatically)
+- **edit**: Replace a specific text snippet in a file (for targeted edits without rewriting the whole file)
 - **bash**: Run shell commands
+- **update_app_features**: Update the app's frontend UI features (e.g. enable file upload button in chat)
 
-Your working directory is: {cwd}
+Your working directory is: __CWD_PLACEHOLDER__
 
 ## Platform architecture
 
@@ -282,34 +318,155 @@ Every sub-app lives in its own directory under `backend/apps/<app_id>/` and MUST
 
 ### File structure guidelines
 
-For **simple apps** (< 150 lines of logic), a single `main.py` is fine.
+For **simple apps** (< 150 lines of logic), a single `main.py` is sufficient. Keep it simple.
 
-For **medium to complex apps** (150+ lines, or with distinct concerns), you MUST split the code into multiple files:
+For **medium to complex apps** (150+ lines, or with distinct concerns), split the code into multiple files. **You decide the file names and structure** based on the app's actual needs — there is no fixed template. Use domain-appropriate names (e.g. `analyzer.py`, `generator.py`, `parser.py`) rather than generic ones.
 
-```
-backend/apps/<app_id>/
-├── __init__.py          # Can be empty
-├── main.py              # Entry point: router + endpoints only (thin controller)
-├── models.py            # Pydantic models, data schemas, type definitions
-├── service.py           # Core business logic, LLM orchestration, data processing
-├── utils.py             # Helper functions, formatters, validators
-├── prompts.py           # LLM prompt templates (if the app uses LLM)
-├── config.py            # App-specific configuration / constants
-└── templates/           # Static templates, if needed
-```
+The ONLY mandatory files are:
+- `__init__.py` (can be empty)
+- `main.py` (entry point: router + `handle_chat` function)
 
-**Rules for splitting**:
-- `main.py` should be a **thin controller**: only route definitions, request parsing, and calling service functions. Aim for < 100 lines.
-- Business logic goes into `service.py` (or multiple service files like `analyzer.py`, `generator.py` for distinct domains)
-- Pydantic models and schemas go into `models.py`
-- LLM prompt strings go into `prompts.py` (keeps them maintainable and easy to tune)
-- Use relative imports between files in the same app: `from .models import MyModel`
+**Guidelines for splitting** (not rules — use your judgment):
+- `main.py` should be a **thin controller**: only route definitions, request parsing, and calling functions from other files. Aim for < 100 lines.
+- Group related logic into files by domain (e.g. `translator.py`, `data_processor.py`), not by layer
+- If the app uses LLM prompts, keeping them in a separate file (e.g. `prompts.py`) makes them easier to tune
+- Use relative imports between files in the same app: `from .my_module import MyClass`
 
 Sub-apps can import shared services:
 ```python
 from backend.core.llm_service import chat_completion
 from backend.core.asr_service import transcribe
 ```
+
+### Shared File Toolkit (IMPORTANT — use this instead of writing file operations from scratch!)
+
+The platform provides a powerful file toolkit at `backend.core.file_toolkit`. **Always use this for file operations** instead of writing PDF/PPT/Excel code from scratch.
+
+```python
+from backend.core.file_toolkit import (
+    # PDF
+    parse_pdf,           # parse_pdf(file_path) -> str (extracted text)
+    generate_pdf,        # generate_pdf(content, title=...) -> Path
+    # PPT
+    generate_ppt,        # generate_ppt(slides=[{"title": ..., "content": [...], "notes": ...}], title=..., style=...) -> Path
+    # Excel / CSV
+    parse_excel,         # parse_excel(file_path, sheet_name=...) -> {"headers": [...], "rows": [...], "row_count": int}
+    generate_excel,      # generate_excel(data=[{"col": val, ...}], sheet_name=..., headers=...) -> Path
+    generate_csv,        # generate_csv(data, headers=...) -> Path
+    # Word
+    parse_docx,          # parse_docx(file_path) -> str (extracted text)
+    # Charts / Images
+    generate_chart,      # generate_chart("bar"|"line"|"pie"|"scatter"|"histogram", data, title=...) -> Path
+    # Download URL management
+    register_download,   # register_download(file_path, filename=...) -> token (str)
+    get_download_url,    # get_download_url(token) -> "/api/files/download/{token}"
+    # Convenience: generate + register in one step
+    generate_and_register_pdf,   # -> {"token": ..., "url": ..., "path": ..., "markdown_link": "[📥 下载 file.pdf](/api/files/download/xxx)"}
+    generate_and_register_ppt,   # -> {"token": ..., "url": ..., "path": ..., "markdown_link": "[📥 下载 file.pptx](/api/files/download/xxx)"}
+    generate_and_register_excel, # -> {"token": ..., "url": ..., "path": ..., "markdown_link": "[📥 下载 file.xlsx](/api/files/download/xxx)"}
+    generate_and_register_chart, # -> {"token": ..., "url": ..., "path": ..., "markdown_link": ..., "image_embed": "![chart](/api/files/preview/xxx)", "preview_url": ...}
+    register_existing_file,      # -> {"token": ..., "url": ..., "path": ..., "markdown_link": "[📥 下载 file](/api/files/download/xxx)"}
+    # Text / String utilities
+    truncate_text,         # truncate_text(text, max_length=500) -> str
+    extract_json_from_text,# extract_json_from_text(llm_response) -> parsed JSON or None
+    sanitize_filename,     # sanitize_filename(name) -> safe filename str
+    # Markdown / HTML
+    markdown_to_html,      # markdown_to_html(md) -> html str
+    format_table_as_markdown, # format_table_as_markdown(headers, rows) -> markdown table str
+    # Data utilities
+    flatten_dict,          # flatten_dict({"a": {"b": 1}) -> {"a.b": 1}
+    chunk_list,            # chunk_list([1,2,3,4,5], 2) -> [[1,2],[3,4],[5]]
+    # Date / Time
+    format_datetime,       # format_datetime(dt=None, fmt=...) -> str (defaults to now)
+    # Download Link Helper (RECOMMENDED — simplest way to serve files)
+    make_download_link,    # make_download_link(file_path, label=..., filename=...) -> "[📥 下载 file.pdf](/api/files/download/xxx)"
+    # Preview / Inline Display Helpers (for images, charts, PDFs displayed in chat)
+    get_preview_url,       # get_preview_url(token) -> "/api/files/preview/{token}"
+    make_preview_link,     # make_preview_link(file_path, label=...) -> "[🔍 预览 file.pdf](/api/files/preview/xxx)"
+    make_image_embed,      # make_image_embed(file_path, alt_text=...) -> "![chart](/api/files/preview/xxx)" (displays image inline in chat)
+)
+```
+
+### ⚠️ File Download Rules (CRITICAL — read carefully!)
+
+**NEVER** construct download URLs manually. **NEVER** use `http://localhost:...` or any absolute URL for downloads. The frontend ONLY recognises relative paths matching `/api/files/download/` rendered as **Markdown links**. Violating these rules will result in broken, non-clickable links.
+
+**Simplest approach — use `make_download_link()` (RECOMMENDED):**
+```python
+from backend.core.file_toolkit import generate_ppt, make_download_link
+
+# Step 1: Generate the file
+path = generate_ppt(slides=[...], title="My PPT", style="professional")
+
+# Step 2: One function call returns a ready-to-use Markdown link
+link = make_download_link(path, label="下载演示文稿", filename="presentation.pptx")
+# link = "[📥 下载演示文稿](/api/files/download/abc123...)"
+
+# Step 3: Embed in your reply
+return {"content": f"文件已生成！\\n\\n{link}"}
+```
+
+**Alternative — use `generate_and_register_*()` convenience functions:**
+```python
+from backend.core.file_toolkit import generate_and_register_ppt
+
+result = generate_and_register_ppt(
+    slides=[{"title": "Hello", "content": ["Point 1", "Point 2"]}],
+    title="My Presentation",
+    style="professional",
+)
+# result has: token, url, path, markdown_link
+# Use result["markdown_link"] directly in the reply:
+return {"content": f"PPT generated!\\n\\n{result['markdown_link']}"}
+```
+
+**Alternative — manual register (for custom file types):**
+```python
+from backend.core.file_toolkit import register_download, get_download_url
+
+token = register_download(file_path, filename="report.pdf")
+url = get_download_url(token)  # ALWAYS relative: "/api/files/download/xxx"
+# You MUST format it as a Markdown link:
+return {"content": f"[📥 下载报告]({url})"}
+```
+
+**Rules summary:**
+1. ✅ Use `make_download_link()` — returns a Markdown link, zero boilerplate
+2. ✅ Use `result["markdown_link"]` from `generate_and_register_*()` — also returns a Markdown link
+3. ✅ Always use **relative paths** (`/api/files/download/xxx` or `/api/files/preview/xxx`)
+4. ✅ Always format as **Markdown links** (`[📥 text](url)`)
+5. ❌ NEVER hardcode `http://localhost:8000` or any absolute URL
+6. ❌ NEVER return a raw URL as plain text (it won't be clickable)
+
+### 📊 Displaying Charts / Images Inline in Chat
+
+If your app generates chart images or any images that should be **displayed inline** in the chat (not downloaded), use the **preview** endpoint instead:
+
+```python
+# Option A: Use make_image_embed() (RECOMMENDED for images/charts)
+from backend.core.file_toolkit import generate_chart, make_image_embed
+
+path = generate_chart("bar", {"labels": ["A", "B"], "values": [10, 20]}, title="Sales")
+img_tag = make_image_embed(path, alt_text="Sales Chart")
+# img_tag = "![Sales Chart](/api/files/preview/xxx)"
+return {"content": f"Here is the chart:\\n\\n{img_tag}"}
+
+# Option B: Use generate_and_register_chart() with image_embed
+from backend.core.file_toolkit import generate_and_register_chart
+
+result = generate_and_register_chart("bar", data, title="Sales")
+# result["image_embed"] = "![Sales](/api/files/preview/xxx)"  <-- inline display
+# result["markdown_link"] = "[📥 下载 chart.png](/api/files/download/xxx)"  <-- download link
+return {"content": f"{result['image_embed']}\\n\\n{result['markdown_link']}"}
+```
+
+**Image Rules:**
+- ✅ Use `make_image_embed()` or `result["image_embed"]` for inline chart/image display
+- ✅ Use `/api/files/preview/xxx` for inline display (Content-Disposition: inline)
+- ✅ Use `/api/files/download/xxx` for file downloads (Content-Disposition: attachment)
+- ✅ Use Markdown image syntax `![alt](url)` — the frontend renders these as styled images
+
+**Supported styles for PPT:** "professional", "creative", "minimal", "academic"
 
 The router pattern in `main.py` MUST follow:
 ```python
@@ -324,7 +481,7 @@ Every app MUST expose a top-level `handle_chat` async function in `main.py`. Thi
 ### Signature
 ```python
 async def handle_chat(
-    messages: list[dict],  # [{{"role": "user"|"assistant"|"system", "content": "..."}}]
+    messages: list[dict],  # [{"role": "user"|"assistant"|"system", "content": "..."}]
     *,
     config: dict | None = None
 ) -> str | dict:
@@ -341,7 +498,7 @@ The platform extracts the reply text from `handle_chat`'s return value using thi
 ```python
 async def handle_chat(messages: list[dict], *, config: dict | None = None) -> str:
     # Simple: call LLM and return string directly.
-    system_msg = {{"role": "system", "content": "You are a helpful assistant."}}
+    system_msg = {"role": "system", "content": "You are a helpful assistant."}
     return await chat_completion([system_msg] + messages)
 ```
 
@@ -351,21 +508,21 @@ async def handle_chat(messages: list[dict], *, config: dict | None = None) -> di
     # Complex: do processing and return dict with 'content' key.
     user_msg = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
     result = await my_complex_processing(user_msg)
-    return {{
-        "content": f"Here's your result: {{result['summary']}}",  # <-- user-facing reply
+    return {
+        "content": f"Here's your result: {result['summary']}",  # <-- user-facing reply
         "data": result["data"],  # additional structured data
-    }}
+    }
 ```
 
 ### BAD example (DO NOT do this):
 ```python
 async def handle_chat(messages, *, config=None) -> dict:
     result = await some_processing(...)
-    return {{
+    return {
         "session_id": "...",
         "response": "done",  # 'response' is lowest priority, not ideal
         "slides": [...],
-    }}
+    }
     # Problem: no 'content' key -> platform falls through to str(result) -> user sees garbage
 ```
 
@@ -376,13 +533,89 @@ If your app calls an LLM (via `chat_completion`):
 - Test your prompts mentally: would the LLM understand what format to return?
 - For multi-step generation (e.g. outlines → content), validate each step's output before proceeding
 
+## UI Features (Frontend Capabilities)
+
+The platform's generic chat UI can dynamically enable extra UI components based on the app's config. Use the `update_app_features` tool to toggle these features.
+
+### Available features:
+- **`file_upload`**: Adds a file upload button (📎) to the chat input. When a user uploads a file, the platform saves it and attaches file metadata to the chat message. Your `handle_chat` function will receive messages with a `files` field:
+  ```python
+  # Message with file attachment:
+  {"role": "user", "content": "Analyze this file", "files": [{"path": "/data/uploads/app_id/abc123.pdf", "name": "report.pdf", "size": 12345}]}
+  ```
+
+### When to use:
+- If the user requests file upload functionality (e.g. "add file upload", "support uploading documents"), you should:
+  1. Call `update_app_features` with `features: ["file_upload"]` to enable the upload button in the UI
+  2. Modify `handle_chat` to read and process files from `message.get("files", [])`
+  3. Both steps are required — the backend code handles the file, the feature flag shows the UI
+
+### Example:
+```python
+async def handle_chat(messages, *, config=None):
+    user_msg = messages[-1] if messages else {}
+    text = user_msg.get("content", "")
+    files = user_msg.get("files", [])
+    
+    if files:
+        # Process uploaded files
+        for f in files:
+            file_path = f["path"]
+            file_name = f["name"]
+            # Read and process the file...
+    
+    return {"content": "Processing complete!"}
+```
+
+## Dependency management
+
+Each app has its own isolated virtual environment at `.venv/` inside its directory.
+- Before writing code, think about what third-party packages the app needs
+- **IMPORTANT**: Check the Shared File Toolkit first! If your app needs PDF/PPT/Excel/CSV/Word operations, use `backend.core.file_toolkit` instead of writing those from scratch. This saves time and avoids dependency issues.
+- After writing code, create a `requirements.txt` file listing all third-party dependencies (one per line, with version pins)
+- The platform will automatically install dependencies from `requirements.txt` into the app's `.venv` before running
+- Do NOT include packages that are already available from the platform (fastapi, pydantic, sqlalchemy, openai, python-pptx, pandas, openpyxl, PyPDF2, python-docx, matplotlib, etc.)
+- Only list packages that are specific to THIS app's functionality
+
+Example `requirements.txt` for an app that generates charts:
+```
+matplotlib>=3.7.0
+numpy>=1.24.0
+```
+
 ## Your workflow
 
 1. **First**: Use `ls` to examine the current directory structure
-2. **Assess complexity**: Estimate how complex the app will be. If it involves multiple concerns (routes + business logic + models + prompts), plan a multi-file structure.
-3. **Plan**: Decide which files to create and what each file is responsible for
-4. **Implement**: Use `write` to create/modify files one by one. Start with models/schemas, then services, then routes.
-5. **Verify**: Use `ls` and `read` to verify files were created correctly
+2. **Assess complexity**: Estimate how complex the app will be based on what it needs to do
+3. **Plan**: Decide the file structure based on the app's actual needs — simple apps need fewer files
+4. **Implement**: Use `write` to create new files, and `edit` to make targeted changes to existing files.
+   - Use `write` when creating a file from scratch or when you need to rewrite most of its content
+   - Use `edit` when you only need to change a small part of an existing file (e.g. fix a bug, add a function, modify an import). This is more efficient and less error-prone than rewriting the whole file.
+   - `edit` requires an exact match of `old_string` — always `read` the file first to get the precise text
+5. **Dependencies**: If the app needs third-party packages, create a `requirements.txt`
+6. **Verify**: Use `ls` and `read` to verify files were created correctly
+
+## Logging in generated code (IMPORTANT)
+
+Always add meaningful `print()` or `logging` statements in the generated app code, especially:
+- At the start of `handle_chat`: log the user input (truncated)
+- Before and after LLM calls: log what's being sent and a summary of what was returned
+- On errors: log the full exception with traceback
+- At key decision points: log what path the code is taking and why
+
+This helps with debugging when the app doesn't behave as expected. Example:
+```python
+async def handle_chat(messages, *, config=None):
+    user_msg = messages[-1]["content"] if messages else ""
+    print(f"[my_app] handle_chat called | input_len={len(user_msg)}")
+    try:
+        result = await process(user_msg)
+        print(f"[my_app] process done | result_type={type(result).__name__}")
+        return result
+    except Exception as e:
+        print(f"[my_app] ERROR: {type(e).__name__}: {e}")
+        raise
+```
 
 ## Step Logging (MANDATORY)
 
@@ -431,6 +664,9 @@ You will periodically receive an **Execution Trace** summarizing your previous a
 - **Review your own reasoning**: Your [STEP]/[INTENT] logs show what you were thinking — check if your assumptions were correct
 
 When you receive verification failures or behavior fix requests, ALWAYS review the trace first to understand what you did wrong before attempting a fix."""
+
+    # Replace the placeholder with actual cwd value
+    base = base.replace("__CWD_PLACEHOLDER__", cwd)
 
     if skills_text:
         base += "\n\n" + skills_text
@@ -507,6 +743,66 @@ def _exec_tool(tool_name: str, params: dict, cwd: str) -> str:
                 output = output[:5000] + "\n... [truncated]"
             return output.strip() if output.strip() else "(no output)"
 
+        elif tool_name == "edit":
+            file_path = params.get("file_path", "").strip()
+            old_string = params.get("old_string", "")
+            new_string = params.get("new_string", "")
+            target = Path(cwd) / file_path if not Path(file_path).is_absolute() else Path(file_path)
+            if not target.exists():
+                return f"Error: File not found: {target}"
+            content = target.read_text(encoding="utf-8", errors="replace")
+            if old_string not in content:
+                # Try to help the agent: show a snippet around approximate location
+                return (
+                    f"Error: old_string not found in {target}. "
+                    f"Make sure the text matches exactly (including whitespace and indentation). "
+                    f"Use 'read' to check the current file content first."
+                )
+            count = content.count(old_string)
+            if count > 1:
+                return (
+                    f"Error: old_string found {count} times in {target}. "
+                    f"Provide more surrounding context to make the match unique."
+                )
+            new_content = content.replace(old_string, new_string, 1)
+            target.write_text(new_content, encoding="utf-8")
+            old_lines = old_string.count("\n") + 1
+            new_lines = new_string.count("\n") + 1
+            return f"Successfully edited {target}: replaced {old_lines} lines with {new_lines} lines"
+
+        elif tool_name == "update_app_features":
+            # Update the app's UI feature flags in the platform config
+            features = params.get("features", [])
+            if not isinstance(features, list):
+                return "Error: features must be a list of strings"
+            # Determine the app_id from the cwd (last directory component under backend/apps/)
+            cwd_path = Path(cwd) if cwd else None
+            if not cwd_path:
+                return "Error: No working directory set"
+            parts = cwd_path.parts
+            app_id_from_cwd = parts[-1] if parts else None
+            if not app_id_from_cwd:
+                return "Error: Could not determine app_id from working directory"
+
+            # Use synchronous sqlite3 to avoid async event loop issues
+            import sqlite3
+            db_path = "data/platform.db"
+            try:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.execute("SELECT config_json FROM apps WHERE id = ?", (app_id_from_cwd,))
+                row = cursor.fetchone()
+                if not row:
+                    conn.close()
+                    return f"Error: App '{app_id_from_cwd}' not found in registry"
+                config = json.loads(row[0]) if row[0] else {}
+                config["features"] = features
+                conn.execute("UPDATE apps SET config_json = ? WHERE id = ?", (json.dumps(config), app_id_from_cwd))
+                conn.commit()
+                conn.close()
+                return f"Successfully updated app '{app_id_from_cwd}' features: {features}"
+            except Exception as e:
+                return f"Error updating app features: {type(e).__name__}: {e}"
+
         else:
             return f"Error: Unknown tool: {tool_name}"
 
@@ -533,6 +829,14 @@ def _summarize_tool_params(tool_name: str, params: dict) -> str:
     elif tool_name == "bash":
         cmd = params.get("command", "?")
         return f"cmd={cmd[:80]}{'...' if len(cmd) > 80 else ''}"
+    elif tool_name == "edit":
+        fp = params.get("file_path", "?")
+        old_s = params.get("old_string", "")
+        new_s = params.get("new_string", "")
+        return f"file={fp} (replace {len(old_s)} chars with {len(new_s)} chars)"
+    elif tool_name == "update_app_features":
+        features = params.get("features", [])
+        return f"features={features}"
     return str(params)[:100]
 
 
@@ -662,6 +966,176 @@ def _strip_tool_calls(text: str) -> str:
 # Request model
 # ─────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────
+# Capability scope check — refuse requests beyond platform abilities
+# ─────────────────────────────────────────────────
+
+async def _check_capability_scope(description: str) -> dict:
+    """
+    Use LLM to quickly evaluate whether the user's request is within
+    the platform's capability scope.
+
+    The platform can handle:
+    - Self-contained apps that process text, generate content, analyze data
+    - Apps that call LLM APIs for generation/analysis
+    - Simple file processing (Excel, PDF, images)
+    - Lightweight utilities (converters, formatters, calculators)
+
+    The platform CANNOT handle:
+    - Apps requiring external databases (MySQL, PostgreSQL, Redis clusters)
+    - Apps requiring persistent background services or workers
+    - Apps requiring external API keys the platform doesn't have
+    - Large-scale systems (recommendation engines, search engines, training pipelines)
+    - Apps requiring real-time external data feeds (stock prices, weather)
+    - Apps requiring user authentication systems beyond what the platform provides
+
+    Returns: {"feasible": bool, "reason": str, "suggestion": str}
+    """
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a capability evaluator for a lightweight AI App Store platform. "
+                "The platform can create small, self-contained Python FastAPI apps that: "
+                "1) Process user text input and generate responses via LLM, "
+                "2) Analyze uploaded files (Excel, PDF, text), "
+                "3) Generate content (text, simple charts, formatted output), "
+                "4) Perform calculations, conversions, formatting. "
+                "\nThe platform CANNOT: "
+                "1) Set up external databases, message queues, or caching clusters, "
+                "2) Access real-time external data (stock prices, live weather, web scraping), "
+                "3) Run persistent background workers or scheduled tasks, "
+                "4) Build full-stack web apps with their own frontend, "
+                "5) Train or fine-tune ML models, "
+                "6) Access APIs requiring keys the platform doesn't provide. "
+                "\nIMPORTANT: Be generous — if the app can work in a simplified/self-contained way, "
+                "it IS feasible. Only reject clearly impossible requests. "
+                "For example, 'build a todo list' is feasible (can use in-memory or file storage). "
+                "'Build a recommendation system' using LLM is feasible (LLM-based recommendations). "
+                "'Build a real-time stock trading bot' is NOT feasible. "
+                "\nOutput ONLY a JSON object: {\"feasible\": true/false, \"reason\": \"...\", \"suggestion\": \"...\"} "
+                "If feasible, reason should be empty and suggestion should be empty. "
+                "If not feasible, reason should explain why, and suggestion should offer a simpler alternative the platform CAN do."
+            ),
+        },
+        {"role": "user", "content": f"User request: {description}"},
+    ]
+    try:
+        raw = await chat_completion(messages, temperature=0.1, max_tokens=300)
+        raw = _strip_thinking(raw).strip()
+        if raw.startswith("```"):
+            raw = "\n".join(raw.split("\n")[1:])
+        if raw.endswith("```"):
+            raw = raw[:-3]
+        result = json.loads(raw.strip())
+        if not isinstance(result, dict) or "feasible" not in result:
+            return {"feasible": True, "reason": "", "suggestion": ""}
+        return result
+    except Exception:
+        # If the check itself fails, don't block — assume feasible
+        return {"feasible": True, "reason": "", "suggestion": ""}
+
+
+# ─────────────────────────────────────────────────
+# App venv management — isolated dependencies per app
+# ─────────────────────────────────────────────────
+
+def _ensure_app_venv(app_dir: str) -> str:
+    """
+    Ensure the app has its own .venv directory.
+    Creates one if it doesn't exist.
+    Returns the path to the venv's Python executable.
+    """
+    venv_dir = Path(app_dir) / ".venv"
+    python_path = venv_dir / "bin" / "python"
+    if not venv_dir.exists():
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "venv", str(venv_dir)],
+                capture_output=True, text=True, timeout=60,
+            )
+        except Exception as e:
+            print(f"[venv] Failed to create venv at {venv_dir}: {e}")
+            return sys.executable  # Fallback to system Python
+    return str(python_path) if python_path.exists() else sys.executable
+
+
+def _check_and_install_deps(app_dir: str) -> dict:
+    """
+    Check if the app's .venv has all required packages installed.
+    If requirements.txt exists and some packages are missing, install them.
+
+    Returns: {"ok": bool, "installed": list[str], "errors": list[str]}
+    """
+    req_file = Path(app_dir) / "requirements.txt"
+    if not req_file.exists():
+        return {"ok": True, "installed": [], "errors": []}
+
+    python_path = _ensure_app_venv(app_dir)
+    venv_dir = Path(app_dir) / ".venv"
+    pip_path = venv_dir / "bin" / "pip"
+
+    if not pip_path.exists():
+        # No venv pip, fall back to system pip
+        pip_path = Path(sys.executable).parent / "pip"
+        if not pip_path.exists():
+            return {"ok": False, "installed": [], "errors": ["pip not found"]}
+
+    # Read requirements
+    requirements = []
+    for line in req_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            requirements.append(line)
+
+    if not requirements:
+        return {"ok": True, "installed": [], "errors": []}
+
+    # Check which packages are already installed
+    try:
+        result = subprocess.run(
+            [str(pip_path), "freeze"],
+            capture_output=True, text=True, timeout=30,
+        )
+        installed_pkgs = set()
+        for line in result.stdout.splitlines():
+            pkg_name = line.split("==")[0].split(">=")[0].split("<=")[0].strip().lower()
+            if pkg_name:
+                installed_pkgs.add(pkg_name)
+    except Exception:
+        installed_pkgs = set()
+
+    # Find missing packages
+    missing = []
+    for req in requirements:
+        pkg_name = req.split("==")[0].split(">=")[0].split("<=")[0].split("[")[0].strip().lower()
+        if pkg_name not in installed_pkgs:
+            missing.append(req)
+
+    if not missing:
+        return {"ok": True, "installed": [], "errors": []}
+
+    # Install missing packages
+    installed = []
+    errors = []
+    for pkg in missing:
+        try:
+            result = subprocess.run(
+                [str(pip_path), "install", pkg],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode == 0:
+                installed.append(pkg)
+            else:
+                errors.append(f"{pkg}: {result.stderr.strip()[-200:]}")
+        except subprocess.TimeoutExpired:
+            errors.append(f"{pkg}: installation timed out")
+        except Exception as e:
+            errors.append(f"{pkg}: {e}")
+
+    return {"ok": len(errors) == 0, "installed": installed, "errors": errors}
+
+
 class GenerateRequest(BaseModel):
     """Request to generate or modify a sub-app."""
     description: str
@@ -687,7 +1161,8 @@ async def generate_app(req: GenerateRequest):
     """
     import uuid as _uuid
     session_id = f"gen-{_uuid.uuid4().hex[:8]}"
-    print(f"[api] POST /generate | app_id={req.app_id} | session={session_id} | desc_len={len(req.description)}")
+    print(f"[api] POST /generate | app_id={req.app_id} | base_app_id={req.base_app_id} | session={session_id} | desc_len={len(req.description)}")
+    print(f"[api] Description: {req.description[:200]}")
 
     async def event_stream():
         session = _create_session(session_id)
@@ -705,11 +1180,27 @@ async def generate_app(req: GenerateRequest):
                 target_dir.mkdir(parents=True, exist_ok=True)
 
             cwd = str(target_dir)
+            print(f"[agent] Working directory resolved: {cwd} | is_edit={bool(req.app_id)} | inferred_app_id={inferred_app_id}")
 
             yield _sse({"type": "start", "method": "agentic-loop", "app_id": req.app_id, "session_id": session_id})
             yield _sse({"type": "log", "message": f"Working directory: {cwd}"})
             yield _sse({"type": "log", "message": f"Model: {llm_settings.model}"})
             yield _sse({"type": "log", "message": f"Max iterations: {MAX_ITERATIONS} (with auto context compression)"})
+
+            # Capability scope check (only for new apps, not modifications)
+            if not req.app_id:
+                yield _sse({"type": "log", "message": "🔍 Checking capability scope..."})
+                scope_result = await _check_capability_scope(req.description)
+                if not scope_result.get("feasible", True):
+                    reason = scope_result.get("reason", "Request exceeds platform capabilities")
+                    suggestion = scope_result.get("suggestion", "")
+                    msg = f"⚠️ This request may be beyond the platform's capabilities: {reason}"
+                    if suggestion:
+                        msg += f"\n💡 Suggestion: {suggestion}"
+                    yield _sse({"type": "scope_warning", "message": msg, "reason": reason, "suggestion": suggestion})
+                    yield _sse({"type": "done", "output": msg, "files_modified": [], "app_id": None})
+                    return
+                yield _sse({"type": "log", "message": "✅ Request is within platform capabilities"})
 
             # Build the prompt
             if req.app_id:
@@ -748,6 +1239,7 @@ async def generate_app(req: GenerateRequest):
             ]
 
             yield _sse({"type": "log", "message": "Starting agentic coding loop..."})
+            print(f"[agent] Starting agentic loop | cwd={cwd} | msgs={len(messages)} | is_edit={bool(req.app_id)}")
 
             # Run the shared agentic loop
             files_modified = []
@@ -767,11 +1259,16 @@ async def generate_app(req: GenerateRequest):
                 yield event_str
 
             # Self-verification
+            print(f"[agent] Agentic loop finished | files_modified={files_modified} | output_len={len(full_output)}")
             new_app_id = req.app_id
             if not new_app_id:
                 new_app_id = await _discover_and_register_app(req.description, cwd, inferred_app_id)
+                print(f"[agent] Discovered app_id: {new_app_id}")
+            else:
+                print(f"[agent] Using existing app_id: {new_app_id}")
 
             if new_app_id and files_modified:
+                print(f"[agent] Running self-verification for '{new_app_id}' | files={files_modified}")
                 yield _sse({"type": "log", "message": "🔍 Running self-verification..."})
                 verify = _self_verify(new_app_id, cwd)
                 for check in verify["checks"]:
@@ -810,10 +1307,29 @@ async def generate_app(req: GenerateRequest):
 
             if new_app_id:
                 yield _sse({"type": "log", "message": f"App registered: {new_app_id}"})
+
+                # Setup venv and install dependencies for the new app
+                yield _sse({"type": "log", "message": "📦 Setting up app environment..."})
+                _ensure_app_venv(cwd)
+                deps_result = _check_and_install_deps(cwd)
+                if deps_result["installed"]:
+                    yield _sse({"type": "log", "message": f"📦 Installed: {', '.join(deps_result['installed'])}"})
+                if deps_result["errors"]:
+                    for err in deps_result["errors"]:
+                        yield _sse({"type": "log", "message": f"⚠️ Dep install error: {err}"})
+                if deps_result["ok"]:
+                    yield _sse({"type": "log", "message": "✅ App environment ready"})
+
+                print(f"[agent] Reloading app module '{new_app_id}'...")
                 try:
                     app_registry.reload_app_module(new_app_id)
-                except Exception:
-                    pass
+                    print(f"[agent] ✅ reload_app_module succeeded for '{new_app_id}'")
+                    yield _sse({"type": "log", "message": f"✅ App module '{new_app_id}' reloaded successfully"})
+                except Exception as e:
+                    print(f"[agent] ⚠️ reload_app_module failed for '{new_app_id}': {e}")
+                    import traceback as _tb
+                    _tb.print_exc()
+                    yield _sse({"type": "log", "message": f"⚠️ Module reload failed: {e}. App may need a server restart."})
 
             # Extract and save skills
             skill_app_id = new_app_id or effective_app_id
@@ -829,13 +1345,20 @@ async def generate_app(req: GenerateRequest):
                 except Exception as e:
                     yield _sse({"type": "log", "message": f"Warning: skill extraction failed: {e}"})
 
+            print(f"[agent] ✅ Agent session complete | app_id={new_app_id} | files_modified={files_modified} | output_len={len(full_output)}")
             yield _sse({
                 "type": "done",
                 "output": full_output[:3000],
                 "files_modified": files_modified,
                 "app_id": new_app_id,
             })
+        except Exception as _gen_err:
+            print(f"[agent] ❌ CRITICAL ERROR in event_stream: {_gen_err}")
+            import traceback as _tb
+            _tb.print_exc()
+            yield _sse({"type": "error", "error": f"Internal error: {_gen_err}"})
         finally:
+            print(f"[agent] Session {session_id} destroyed")
             _destroy_session(session_id)
 
     return StreamingResponse(
@@ -893,27 +1416,60 @@ async def _infer_app_id(description: str) -> str:
         {
             "role": "system",
             "content": (
-                "Given a user's app description, generate a short snake_case identifier for the app. "
-                "Rules: lowercase, only letters/digits/underscores, 3-30 chars, descriptive but concise. "
-                "ONLY output the identifier string, nothing else."
+                "You are a naming assistant. Your ONLY job is to generate a short, descriptive snake_case "
+                "identifier (like a Python package name) that summarizes the PURPOSE of the app.\n\n"
+                "Rules:\n"
+                "- 2-4 English words joined by underscores, e.g. 'todo_list', 'ppt_generator', 'weather_bot'\n"
+                "- Lowercase letters, digits, and underscores ONLY\n"
+                "- 3-30 characters total\n"
+                "- Must describe WHAT the app does, NOT what the user said\n"
+                "- Do NOT include words like 'app', 'user', 'want', 'create', 'make', 'build', 'please'\n"
+                "- Do NOT repeat or paraphrase the user's sentence\n\n"
+                "Examples:\n"
+                "  User: '帮我做一个生成PPT的工具' → ppt_generator\n"
+                "  User: 'I want to build a todo list app' → todo_list\n"
+                "  User: '做一个能分析CSV数据的应用' → csv_analyzer\n"
+                "  User: '写一个天气查询机器人' → weather_query\n"
+                "  User: '帮我写一个记账本' → expense_tracker\n"
+                "  User: '做个图片压缩工具' → image_compressor\n\n"
+                "Output ONLY the identifier, nothing else. No quotes, no backticks, no explanation."
             ),
         },
         {"role": "user", "content": description},
     ]
+    import re
     try:
         raw = await chat_completion(messages, temperature=0.1, max_tokens=50)
-        raw = _strip_thinking(raw).strip().strip('"').strip("'").strip('`')
+        raw = _strip_thinking(raw).strip().strip('"').strip("'").strip('`').strip()
         # Sanitize: only allow valid Python identifier chars
-        import re
-        sanitized = re.sub(r'[^a-z0-9_]', '_', raw.lower()).strip('_')
+        sanitized = re.sub(r'[^a-z0-9_]', '_', raw.lower())
+        # Collapse multiple underscores and strip leading/trailing
+        sanitized = re.sub(r'_+', '_', sanitized).strip('_')
+        # Reject if it still looks like a sentence or contains noise words
+        noise_words = {'the', 'user', 'wants', 'want', 'me', 'to', 'generate', 'create',
+                       'make', 'build', 'please', 'help', 'app', 'application', 'a', 'an'}
+        parts = sanitized.split('_')
+        cleaned_parts = [p for p in parts if p and p not in noise_words]
+        if cleaned_parts:
+            sanitized = '_'.join(cleaned_parts)[:30]
         if sanitized and len(sanitized) >= 3:
-            return sanitized[:30]
+            # Check for directory collision, append suffix if needed
+            candidate = APPS_DIR / sanitized
+            if candidate.exists():
+                for i in range(2, 100):
+                    alt = f"{sanitized[:26]}_{i}"
+                    if not (APPS_DIR / alt).exists():
+                        return alt
+            return sanitized
     except Exception:
         pass
-    # Fallback: generate from first few words of description
-    import re
-    words = re.findall(r'[a-zA-Z0-9\u4e00-\u9fff]+', description)[:3]
-    fallback = '_'.join(w.lower() for w in words if w.isascii()) or f"app_{__import__('uuid').uuid4().hex[:6]}"
+    # Fallback: extract meaningful words from description
+    words = re.findall(r'[a-zA-Z]+', description)
+    # Filter out noise words
+    noise = {'the', 'a', 'an', 'i', 'want', 'to', 'make', 'create', 'build', 'help',
+             'me', 'please', 'app', 'write', 'do', 'generate', 'user', 'wants'}
+    meaningful = [w.lower() for w in words if w.lower() not in noise and len(w) > 1][:3]
+    fallback = '_'.join(meaningful) if meaningful else f"app_{__import__('uuid').uuid4().hex[:6]}"
     return fallback[:30]
 
 
@@ -1044,26 +1600,55 @@ async def _compress_context(messages: list[dict], keep_last_n: int = 4) -> list[
     Compress the conversation history to save tokens.
     Keeps: system prompt (messages[0]), last N messages, and a summary of everything in between.
     The summary preserves: original goal, key decisions, files modified, errors encountered, current state.
+
+    IMPORTANT: Ensures assistant+tool message pairs are never split apart, as the OpenAI API
+    requires tool-role messages to immediately follow the assistant message containing the
+    corresponding tool_calls. Splitting them causes API errors or hangs.
     """
     if len(messages) <= keep_last_n + 2:
         return messages  # Nothing to compress
 
     system_msg = messages[0]
-    middle = messages[1:-keep_last_n]  # Messages to be compressed
-    recent = messages[-keep_last_n:]   # Messages to keep verbatim
+    body = messages[1:]  # Everything except system message
 
-    # Build a condensed view of middle messages for summarization
+    # --- Find a safe split point that doesn't break assistant↔tool pairs ---
+    # Walk backwards from the desired split point to find a safe boundary.
+    # A safe boundary is a position where the message is NOT a "tool" role
+    # (i.e., we don't start the "recent" slice in the middle of tool responses).
+    desired_keep = keep_last_n
+    split_idx = len(body) - desired_keep
+
+    # Ensure split_idx >= 1 so we have something to compress
+    if split_idx < 1:
+        return messages
+
+    # Walk backwards: if body[split_idx] is a "tool" message, move split_idx earlier
+    # until we hit an "assistant" message (which owns the tool_calls), and include it.
+    while split_idx > 0 and body[split_idx].get("role") == "tool":
+        split_idx -= 1
+    # Now body[split_idx] should be the "assistant" message that owns the tool_calls.
+    # Include it in the "recent" portion so the pair stays intact.
+
+    middle = body[:split_idx]
+    recent = body[split_idx:]
+
+    if not middle:
+        return messages  # Nothing to compress
+
+    # --- Build condensed text for summarization ---
     middle_parts = []
     for msg in middle:
         role = msg.get("role", "")
-        content = msg.get("content", "")
-        # Truncate long messages for the summarization call
-        if len(content) > 600:
-            content = content[:600] + "..."
+        content = msg.get("content", "") or ""
+        # Skip tool-role messages in summary (they are verbose tool outputs)
+        if role == "tool":
+            content = content[:150] + "..." if len(content) > 150 else content
+        elif len(content) > 400:
+            content = content[:400] + "..."
         middle_parts.append(f"[{role}]: {content}")
     middle_text = "\n".join(middle_parts)
 
-    # Limit the input to the summarization call
+    # Limit the total input to the summarization call
     if len(middle_text) > 8000:
         middle_text = middle_text[:8000] + "\n... [truncated]"
 
@@ -1081,18 +1666,32 @@ Format as a structured summary, ~300 words max. Be factual and precise.
 {middle_text}"""
 
     try:
-        summary = await chat_completion(
-            [
-                {"role": "system", "content": "You are a conversation summarizer. Output a concise structured summary."},
-                {"role": "user", "content": compress_prompt},
-            ],
-            temperature=0.1,
-            max_tokens=1000,
+        summary = await asyncio.wait_for(
+            chat_completion(
+                [
+                    {"role": "system", "content": "You are a conversation summarizer. Output a concise structured summary."},
+                    {"role": "user", "content": compress_prompt},
+                ],
+                temperature=0.1,
+                max_tokens=1000,
+            ),
+            timeout=60.0,  # 60-second hard timeout to prevent hangs
         )
         summary = _strip_thinking(summary).strip()
+    except asyncio.TimeoutError:
+        summary = f"[Context compressed: {len(middle)} messages summarized (summarization timed out). Recent context preserved.]"
     except Exception:
         # If summarization fails, do a crude truncation
         summary = f"[Context compressed: {len(middle)} messages summarized. Recent context preserved.]"
+
+    # --- Clean recent messages: strip reasoning_content to avoid API issues ---
+    cleaned_recent = []
+    for msg in recent:
+        cleaned = dict(msg)
+        # Remove reasoning_content from compressed context — it's for the API's internal
+        # use and can cause issues when replayed in a new conversation sequence
+        cleaned.pop("reasoning_content", None)
+        cleaned_recent.append(cleaned)
 
     compressed = [
         system_msg,
@@ -1100,7 +1699,7 @@ Format as a structured summary, ~300 words max. Be factual and precise.
             "role": "user",
             "content": f"## Context Summary (compressed from {len(middle)} earlier messages)\n\n{summary}\n\n---\nContinue from where you left off. The recent messages below show the latest state.",
         },
-        *recent,
+        *cleaned_recent,
     ]
     return compressed
 
@@ -1290,6 +1889,11 @@ async def _run_agentic_loop(
             yield _sse({"type": "tool_call", "tool": tool_name, "input": params})
 
             result = _exec_tool(tool_name, params, cwd)
+            # Log tool execution details to server console
+            is_success = not result.startswith("Error")
+            print(f"[agent] Tool '{tool_name}' | params={_summarize_tool_params(tool_name, params)} | success={is_success} | result_len={len(result)}")
+            if not is_success:
+                print(f"[agent] Tool '{tool_name}' ERROR: {result[:300]}")
             tool_results.append({"name": tool_name, "result": result, "tool_call_id": tc.id})
 
             # Build trace entry for this tool call
@@ -1305,10 +1909,11 @@ async def _run_agentic_loop(
 
             yield _sse({"type": "tool_result", "tool": tool_name, "output": result[:500]})
 
-            if tool_name == "write":
+            if tool_name in ("write", "edit"):
                 fp = params.get("file_path", "").strip()
                 if fp and fp not in files_modified:
                     files_modified.append(fp)
+                    print(f"[agent] File modified: {fp} (total: {len(files_modified)})")
                     yield _sse({"type": "file_modified", "path": fp})
 
         if session["interrupted"]:

@@ -239,6 +239,28 @@ async def update_app_config(app_id: str, config: dict) -> Optional[dict]:
         return record.to_dict()
 
 
+async def update_app_info(
+    app_id: str,
+    *,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    icon: Optional[str] = None,
+) -> Optional[dict]:
+    """Update app display info (name, description, icon)."""
+    async with async_session() as session:
+        record = await session.get(AppRecord, app_id)
+        if not record:
+            return None
+        if name is not None:
+            record.name = name
+        if description is not None:
+            record.description = description
+        if icon is not None:
+            record.icon = icon
+        await session.commit()
+        return record.to_dict()
+
+
 def load_app_module(app_id: str):
     """Dynamically load a sub-app's Python module."""
     if app_id in _loaded_apps:
@@ -246,20 +268,33 @@ def load_app_module(app_id: str):
     try:
         mod = importlib.import_module(f"backend.apps.{app_id}.main")
         _loaded_apps[app_id] = mod
+        print(f"[app_registry] Loaded module for '{app_id}'")
         return mod
-    except Exception:
+    except Exception as e:
+        print(f"[app_registry] ❌ Failed to load module for '{app_id}': {e}")
         return None
 
 
 def reload_app_module(app_id: str):
     """
     Force-reload a sub-app module (and its sub-modules).
-    Call this after auto-fix modifies app source files.
+    Call this after the agent modifies app source files.
+    Clears both the internal cache and sys.modules entries so Python re-imports from disk.
     """
-    _loaded_apps.pop(app_id, None)
     import sys
+    # 1. Clear internal cache
+    _loaded_apps.pop(app_id, None)
+    # 2. Remove ALL cached modules under the app's package (main, service, config, models, etc.)
     prefix = f"backend.apps.{app_id}"
-    stale_keys = [k for k in sys.modules if k.startswith(prefix)]
+    stale_keys = [k for k in sys.modules if k == prefix or k.startswith(prefix + ".")]
     for k in stale_keys:
         del sys.modules[k]
-    return load_app_module(app_id)
+    if stale_keys:
+        print(f"[app_registry] Cleared {len(stale_keys)} cached modules for '{app_id}': {stale_keys}")
+    else:
+        print(f"[app_registry] No cached modules found for '{app_id}' (first load)")
+    # 3. Re-import from disk
+    mod = load_app_module(app_id)
+    if mod is None:
+        raise RuntimeError(f"Failed to reload module for app '{app_id}' — check for syntax/import errors")
+    return mod

@@ -1,11 +1,19 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, Loader2, Wrench, Terminal, CheckCircle, AlertCircle, FileCode, ChevronDown, ChevronUp, RotateCcw, StopCircle, MessageSquare, ThumbsDown } from 'lucide-react'
+import { Send, Loader2, Wrench, Terminal, CheckCircle, AlertCircle, FileCode, ChevronDown, ChevronUp, RotateCcw, StopCircle, MessageSquare, ThumbsDown, Download, Paperclip, X, FileUp } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
-import api, { autoFixAppStream, AgentEvent, interruptAgent, injectAgentMessage } from '../services/api'
+import api, { autoFixAppStream, AgentEvent, interruptAgent, injectAgentMessage, uploadFileForApp, GenericUploadResult } from '../services/api'
 
 interface Props {
   appId: string
   appName: string
+  appConfig?: Record<string, unknown>
+}
+
+interface UploadedFile {
+  file_path: string
+  original_name: string
+  size: number
+  ext: string
 }
 
 interface FixLogEntry {
@@ -15,9 +23,13 @@ interface FixLogEntry {
   detail?: string
 }
 
-export default function GenericApp({ appId, appName }: Props) {
+export default function GenericApp({ appId, appName, appConfig }: Props) {
+  // Determine features from app config
+  const features = (appConfig?.features as string[]) || []
+  const hasFileUpload = features.includes('file_upload')
+
   const [question, setQuestion] = useState('')
-  const [messages, setMessages] = useState<Array<{ role: string; content: string; rawData?: any }>>([])
+  const [messages, setMessages] = useState<Array<{ role: string; content: string; rawData?: any; files?: Array<{ path: string; name: string; size?: number }> }>>([])
   const [loading, setLoading] = useState(false)
 
   // Auto-fix state
@@ -34,6 +46,10 @@ export default function GenericApp({ appId, appName }: Props) {
   const [showFixLogs, setShowFixLogs] = useState(true)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [supervisionInput, setSupervisionInput] = useState('')
+  // File upload state
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   // Behavior fix state
   const [behaviorFixTarget, setBehaviorFixTarget] = useState<{
     userInput: string
@@ -64,10 +80,20 @@ export default function GenericApp({ appId, appName }: Props) {
   }
 
   const handleSend = async () => {
-    if (!question.trim()) return
+    if (!question.trim() && uploadedFiles.length === 0) return
     const q = question.trim()
     setQuestion('')
-    const newMessages = [...messages, { role: 'user', content: q }]
+    // Build message with file attachments if any
+    const userMessage: any = { role: 'user', content: q }
+    if (uploadedFiles.length > 0) {
+      userMessage.files = uploadedFiles.map(f => ({
+        path: f.file_path,
+        name: f.original_name,
+        size: f.size,
+      }))
+    }
+    const newMessages = [...messages, userMessage]
+    setUploadedFiles([])  // Clear files after sending
     setMessages(newMessages)
     setLoading(true)
     // Clear previous error and all fix state when sending new message
@@ -359,8 +385,58 @@ export default function GenericApp({ appId, appName }: Props) {
                     msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-200'
                   }`}
                 >
+                  {msg.role === 'user' && msg.files && msg.files.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-1.5">
+                      {msg.files.map((f: any, fi: number) => (
+                        <span key={fi} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-500/30 rounded-md text-[11px] text-indigo-200">
+                          <FileUp size={10} />
+                          {f.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   {msg.role === 'assistant' ? (
-                    <ReactMarkdown className="prose prose-invert prose-sm max-w-none">{msg.content}</ReactMarkdown>
+                    <ReactMarkdown
+                      className="prose prose-invert prose-sm max-w-none"
+                      components={{
+                        a({ href, children, ...props }) {
+                          const isDownload = href?.includes('/api/files/download/')
+                          if (isDownload) {
+                            return (
+                              <a
+                                href={href}
+                                download
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/30 text-indigo-300 hover:text-indigo-200 rounded-lg text-xs font-medium transition-all no-underline my-1"
+                                {...props}
+                              >
+                                <Download size={14} />
+                                {children}
+                              </a>
+                            )
+                          }
+                          return (
+                            <a href={href} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 underline" {...props}>
+                              {children}
+                            </a>
+                          )
+                        },
+                        img({ src, alt, ...props }) {
+                          const isPreview = src?.includes('/api/files/preview/')
+                          return (
+                            <img
+                              src={src}
+                              alt={alt || ''}
+                              className={`rounded-lg my-2 max-w-full ${isPreview ? 'border border-slate-600/50 shadow-lg' : ''}`}
+                              style={{ maxHeight: '400px', objectFit: 'contain' }}
+                              loading="lazy"
+                              {...props}
+                            />
+                          )
+                        },
+                      }}
+                    >
+                      {msg.content}
+                    </ReactMarkdown>
                   ) : (
                     msg.content
                   )}
@@ -403,22 +479,79 @@ export default function GenericApp({ appId, appName }: Props) {
           </div>
         )}
 
-        <div className="p-3 border-t border-slate-700/50 flex gap-2">
-          <input
-            type="text"
-            value={question}
-            onChange={e => setQuestion(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSend()}
-            placeholder="Type a message..."
-            className="flex-1 px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-          />
-          <button
-            onClick={handleSend}
-            disabled={loading || !question.trim()}
-            className="p-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-600 text-white rounded-lg transition-colors"
-          >
-            <Send size={16} />
-          </button>
+        <div className="p-3 border-t border-slate-700/50">
+          {/* File upload preview bar */}
+          {uploadedFiles.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {uploadedFiles.map((f, idx) => (
+                <div key={idx} className="flex items-center gap-1.5 px-2 py-1 bg-indigo-600/20 border border-indigo-500/30 rounded-lg text-xs text-indigo-300">
+                  <FileUp size={12} />
+                  <span className="max-w-[150px] truncate">{f.original_name}</span>
+                  <span className="text-indigo-400/60">({(f.size / 1024).toFixed(1)}KB)</span>
+                  <button
+                    onClick={() => setUploadedFiles(prev => prev.filter((_, i) => i !== idx))}
+                    className="hover:text-red-400 transition-colors"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2">
+            {/* File upload button (only if feature enabled) */}
+            {hasFileUpload && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    setUploading(true)
+                    try {
+                      const result = await uploadFileForApp(appId, file)
+                      setUploadedFiles(prev => [...prev, {
+                        file_path: result.file_path,
+                        original_name: result.original_name,
+                        size: result.size,
+                        ext: result.ext,
+                      }])
+                    } catch (err: any) {
+                      console.error('Upload failed:', err)
+                    } finally {
+                      setUploading(false)
+                      if (fileInputRef.current) fileInputRef.current.value = ''
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="p-2 text-slate-400 hover:text-indigo-400 hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
+                  title="Upload file"
+                >
+                  {uploading ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={16} />}
+                </button>
+              </>
+            )}
+            <input
+              type="text"
+              value={question}
+              onChange={e => setQuestion(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSend()}
+              placeholder={hasFileUpload ? "Type a message or upload a file..." : "Type a message..."}
+              className="flex-1 px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+            />
+            <button
+              onClick={handleSend}
+              disabled={loading || (!question.trim() && uploadedFiles.length === 0)}
+              className="p-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-600 text-white rounded-lg transition-colors"
+            >
+              <Send size={16} />
+            </button>
+          </div>
         </div>
       </div>
 

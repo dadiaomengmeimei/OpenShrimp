@@ -10,6 +10,8 @@ __pycache__/
 dist/
 build/
 *.egg
+.venv/
+venv/
 
 # Node
 node_modules/
@@ -37,3 +39,5 @@ backend/apps/*/test_*.py
 
 # Generated outputs
 *.pptx
+backend/generated_files/
+nohup.out

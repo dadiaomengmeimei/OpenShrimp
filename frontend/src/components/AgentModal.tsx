@@ -107,6 +107,11 @@ export default function AgentModal({ onClose, onComplete, editAppId, editAppName
               setFilesModified(event.files_modified || [])
               addLog('done', '✨ Generation complete!')
               break
+            case 'scope_warning':
+              setFinished(true)
+              setSessionId(null)
+              addLog('error', event.message || 'Request exceeds platform capabilities')
+              break
             case 'skills_updated':
               if (event.items) {
                 setSkills(event.items)

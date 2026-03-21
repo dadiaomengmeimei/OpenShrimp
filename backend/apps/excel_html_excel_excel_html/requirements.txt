@@ -1,0 +1,5 @@
+# Excel to HTML Charts App
+# Dependencies are provided by the platform:
+# - FastAPI, Pydantic (platform core)
+# - backend.core.file_toolkit (parse_excel, generate_chart, register_existing_file)
+# No additional packages required

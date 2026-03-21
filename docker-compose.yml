@@ -12,7 +12,7 @@ services:
     volumes:
       - ./backend:/app/backend
       - ./data:/app/data
-    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude 'backend/apps/*'
 
   frontend:
     build:

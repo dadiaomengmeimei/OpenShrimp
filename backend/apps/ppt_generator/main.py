@@ -21,6 +21,7 @@ from .service import (
     generate_ppt_from_topic,
     update_ppt_session,
     _sessions,
+    _register_and_get_download_link,
 )
 from . import config as app_config
 
@@ -29,7 +30,11 @@ router = APIRouter(prefix="/api/apps/ppt_generator", tags=["PPT Generator"])
 
 def _session_to_response(session: PPTSession) -> PPTResponse:
     """Convert PPTSession to PPTResponse."""
-    download_url = f"/api/apps/ppt_generator/download/{session.session_id}"
+    # Use unified file download URL via file_toolkit
+    if session.ppt_file_path and Path(session.ppt_file_path).exists():
+        download_url = _register_and_get_download_link(Path(session.ppt_file_path), session)
+    else:
+        download_url = f"/api/apps/ppt_generator/download/{session.session_id}"
     return PPTResponse(
         session_id=session.session_id,
         topic=session.topic,
@@ -241,10 +246,10 @@ async def chat(session_id: str, instruction: str):
             session_id=session_id,
             instruction=instruction,
         )
-        download_link = f"/api/apps/ppt_generator/download/{session.session_id}"
+        download_link = _register_and_get_download_link(Path(session.ppt_file_path), session)
         return {
             "session_id": session.session_id,
-            "content": f"PPT 已更新，现在包含 {len(session.slides)} 页。\n\n[📥 下载 PPT]({download_link})",
+            "content": f"PPT 已更新，现在包含 {len(session.slides)} 页。\n\n{download_link}",
             "slides": [slide.model_dump() for slide in session.slides],
             "download_url": download_link,
         }
@@ -299,11 +304,11 @@ async def handle_chat(messages: List[Dict[str, str]], config: Optional[Dict[str,
                 style=config.get("style") if config else None,
                 language=config.get("language") if config else None,
             )
-            download_link = f"/api/apps/ppt_generator/download/{session.session_id}"
+            download_link = _register_and_get_download_link(Path(session.ppt_file_path), session)
             # Return response with 'content' key for platform compatibility
             # Format download link as markdown hyperlink for clickable download
             return {
-                "content": f"PPT 已更新 '{session.topic}'，现在包含 {len(session.slides)} 页。\n\n[📥 下载 PPT]({download_link})",
+                "content": f"PPT 已更新 '{session.topic}'，现在包含 {len(session.slides)} 页。\n\n{download_link}",
                 "session_id": session.session_id,
                 "slides": [slide.model_dump() for slide in session.slides],
                 "download_url": download_link,
@@ -324,11 +329,11 @@ async def handle_chat(messages: List[Dict[str, str]], config: Optional[Dict[str,
                 style=style,
                 language=language,
             )
-            download_link = f"/api/apps/ppt_generator/download/{session.session_id}"
+            download_link = _register_and_get_download_link(Path(session.ppt_file_path), session)
             # Return response with 'content' key for platform compatibility
             # Format download link as markdown hyperlink for clickable download
             return {
-                "content": f"已生成关于 '{session.topic}' 的 PPT，包含 {len(session.slides)} 页。\n\n[📥 下载 PPT]({download_link})",
+                "content": f"已生成关于 '{session.topic}' 的 PPT，包含 {len(session.slides)} 页。\n\n{download_link}",
                 "session_id": session.session_id,
                 "slides": [slide.model_dump() for slide in session.slides],
                 "download_url": download_link,

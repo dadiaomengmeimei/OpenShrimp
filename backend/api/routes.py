@@ -1,11 +1,15 @@
 """API routes for the platform (app CRUD, config, market, etc.)."""
 from __future__ import annotations
 
+import os
 import traceback
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 from pydantic import BaseModel
 from typing import Optional
+
+import uuid
+from pathlib import Path
 
 from backend.core import app_registry
 from backend.core.auth import get_current_user, get_optional_user, require_admin
@@ -29,9 +33,16 @@ class AppConfigUpdate(BaseModel):
     config: dict
 
 
+class AppInfoUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    icon: Optional[str] = None
+
+
 class ChatMessage(BaseModel):
     role: str
     content: str
+    files: Optional[list[dict]] = None  # [{"path": ..., "name": ..., "size": ...}]
 
 
 class AppChatRequest(BaseModel):
@@ -94,6 +105,25 @@ async def update_config(app_id: str, req: AppConfigUpdate, user: dict = Depends(
     return result
 
 
+@router.put("/apps/{app_id}/info")
+async def update_app_info(app_id: str, req: AppInfoUpdate, user: dict = Depends(get_current_user)):
+    """Update app display info (name, description, icon). Only owner or admin."""
+    app = await app_registry.get_app(app_id)
+    if not app:
+        raise HTTPException(404, "App not found")
+    if app.get("author_id") and app["author_id"] != user["id"] and not user.get("is_admin"):
+        raise HTTPException(403, "You can only edit your own apps")
+    result = await app_registry.update_app_info(
+        app_id,
+        name=req.name,
+        description=req.description,
+        icon=req.icon,
+    )
+    if not result:
+        raise HTTPException(404, "App not found")
+    return result
+
+
 # ---------- Market Routes ----------
 
 @router.get("/market")
@@ -149,12 +179,61 @@ async def unpublish_app(app_id: str, user: dict = Depends(get_current_user)):
     return result
 
 
+# ---------- Generic File Upload Route ----------
+
+# Directory for uploaded files (shared across all apps)
+_UPLOAD_BASE = Path("data/uploads")
+_UPLOAD_BASE.mkdir(parents=True, exist_ok=True)
+
+
+@router.post("/apps/{app_id}/upload")
+async def generic_upload(app_id: str, file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    """
+    Generic file upload for any app. Saves file and returns metadata.
+    The frontend sends the returned file info alongside chat messages.
+    """
+    if not file.filename:
+        raise HTTPException(400, "No file provided")
+
+    # Create per-app upload directory
+    app_upload_dir = _UPLOAD_BASE / app_id
+    app_upload_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate unique filename to avoid collisions
+    ext = Path(file.filename).suffix
+    unique_name = f"{uuid.uuid4().hex[:12]}{ext}"
+    file_path = app_upload_dir / unique_name
+
+    content = await file.read()
+    file_path.write_bytes(content)
+
+    print(f"[api] File uploaded for app '{app_id}': {file.filename} -> {file_path} ({len(content)} bytes)")
+
+    return {
+        "ok": True,
+        "file_path": str(file_path),
+        "original_name": file.filename,
+        "size": len(content),
+        "ext": ext,
+    }
+
+
 # ---------- Chat Route ----------
 
 @router.post("/apps/{app_id}/chat")
 async def app_chat(app_id: str, req: AppChatRequest, user: dict = Depends(get_current_user)):
     """Forward a chat request to the sub-app's handler."""
     print(f"[api] POST /apps/{app_id}/chat | user={user.get('username')} | msgs={len(req.messages)}")
+
+    # Check and install dependencies before loading the app module
+    from backend.agent.code_agent import _check_and_install_deps, APPS_DIR
+    app_dir = str((APPS_DIR / app_id).resolve())
+    deps_result = _check_and_install_deps(app_dir)
+    if deps_result.get("installed"):
+        print(f"[api] Installed deps for {app_id}: {deps_result['installed']}")
+    if deps_result.get("errors"):
+        print(f"[api] Dep install errors for {app_id}: {deps_result['errors']}")
+
     mod = app_registry.load_app_module(app_id)
     if not mod:
         raise HTTPException(
@@ -263,3 +342,61 @@ async def admin_list_users(admin: dict = Depends(require_admin)):
 async def admin_list_all_apps(admin: dict = Depends(require_admin)):
     """List ALL apps regardless of ownership (admin only)."""
     return await app_registry.list_apps(user_id=None)
+
+
+# ---------- File Download Route (shared across all apps) ----------
+
+@router.get("/files/download/{token}")
+async def download_file(token: str):
+    """
+    Download a file using a pre-registered token.
+    Apps register files via `backend.core.file_toolkit.register_download()`
+    and return the URL to users (e.g. in markdown links).
+    Forces browser to download (Content-Disposition: attachment).
+    """
+    from backend.core.file_toolkit import get_download_info
+    from fastapi.responses import FileResponse
+
+    info = get_download_info(token)
+    if not info:
+        raise HTTPException(404, "File not found or download link expired")
+
+    file_path = info["path"]
+    if not os.path.exists(file_path):
+        raise HTTPException(404, "File no longer exists on server")
+
+    return FileResponse(
+        path=file_path,
+        filename=info["filename"],
+        media_type=info["mime"],
+    )
+
+
+@router.get("/files/preview/{token}")
+async def preview_file(token: str):
+    """
+    Preview / display a file inline using a pre-registered token.
+    Unlike the download endpoint, this serves the file with
+    Content-Disposition: inline, so browsers will display images,
+    PDFs, etc. directly instead of triggering a download dialog.
+
+    Useful for embedding chart images in chat messages via Markdown
+    image syntax: ![alt](/api/files/preview/{token})
+    """
+    from backend.core.file_toolkit import get_download_info
+    from fastapi.responses import FileResponse
+
+    info = get_download_info(token)
+    if not info:
+        raise HTTPException(404, "File not found or preview link expired")
+
+    file_path = info["path"]
+    if not os.path.exists(file_path):
+        raise HTTPException(404, "File no longer exists on server")
+
+    return FileResponse(
+        path=file_path,
+        filename=info["filename"],
+        media_type=info["mime"],
+        content_disposition_type="inline",
+    )

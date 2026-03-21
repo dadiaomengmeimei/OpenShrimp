@@ -1,0 +1,13 @@
+{
+  "items": [
+    "Use `Optional[Type]` from the typing module instead of Python 3.10+ union syntax (`Type | None`) to ensure compatibility with older Python versions",
+    "For simple FastAPI apps under 150 lines of logic, consolidate all code into a single `main.py` file rather than splitting into modules",
+    "Weather bots can leverage LLM knowledge of typical climate patterns to generate realistic forecasts without requiring external weather API integrations",
+    "When targeting Chinese-speaking users, craft system prompts in Chinese with friendly yet professional tone and structured markdown formatting including emojis",
+    "Include fallback logic in prompts to ask for missing required information (like city names) rather than failing silently",
+    "Verify module imports immediately after writing files to catch syntax errors before the user encounters them",
+    "Structure weather bot responses into clear sections: current conditions, 24-hour forecast, weekly trends, clothing advice, and travel recommendations"
+  ],
+  "updated_at": "2026-03-21T15:24:39.782764",
+  "session_count": 1
+}

@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Sparkles, Trash2, Search, Pencil, ShoppingBag, Globe, LogOut, Shield } from 'lucide-react'
+import { Plus, Sparkles, Trash2, Search, Pencil, ShoppingBag, Globe, LogOut, Shield, Info } from 'lucide-react'
 import { listApps, createApp, deleteApp, publishApp, unpublishApp, AppInfo } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 import ImportModal from '../components/ImportModal'
 import AgentModal from '../components/AgentModal'
+import AppInfoEditModal from '../components/AppInfoEditModal'
 
 export default function HomePage() {
   const navigate = useNavigate()
@@ -14,6 +15,7 @@ export default function HomePage() {
   const [showImport, setShowImport] = useState(false)
   const [showAgent, setShowAgent] = useState(false)
   const [editTarget, setEditTarget] = useState<{ id: string; name: string } | null>(null)
+  const [editInfoApp, setEditInfoApp] = useState<AppInfo | null>(null)
   const [loading, setLoading] = useState(true)
 
   const fetchApps = async () => {
@@ -219,6 +221,13 @@ export default function HomePage() {
                       </button>
                     )}
                     <button
+                      onClick={e => { e.stopPropagation(); setEditInfoApp(app) }}
+                      className="p-1.5 rounded-lg bg-slate-700/50 hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400 transition-colors"
+                      title="Edit icon & description"
+                    >
+                      <Info size={14} />
+                    </button>
+                    <button
                       onClick={e => handleEdit(e, app)}
                       className="p-1.5 rounded-lg bg-slate-700/50 hover:bg-purple-500/20 text-slate-400 hover:text-purple-400 transition-colors"
                       title="Edit with AI"
@@ -270,6 +279,16 @@ export default function HomePage() {
           onComplete={handleAgentComplete}
           editAppId={editTarget?.id}
           editAppName={editTarget?.name}
+        />
+      )}
+      {editInfoApp && (
+        <AppInfoEditModal
+          app={editInfoApp}
+          onClose={() => setEditInfoApp(null)}
+          onSaved={() => {
+            setEditInfoApp(null)
+            fetchApps()
+          }}
         />
       )}
     </div>

@@ -1,0 +1,13 @@
+{
+  "items": [
+    "When extracting optional list values from dictionaries, use `dict.get(\"key\") or []` instead of `dict.get(\"key\", [])` to handle both missing keys and explicit None values, preventing TypeError on len() calls",
+    "When enabling platform features like file upload via update_app_features, ensure the app is first registered to avoid 'app not found' errors",
+    "Use Python 3.9 compatible type hints (Union[X, Y] instead of X | Y) for broader compatibility across environments",
+    "ECharts is a reliable choice for creating adaptive distribution charts from Excel data",
+    "FastAPI sub-apps should follow the handle_chat function + router pattern for consistent platform integration",
+    "For Excel file parsing in Python, pandas with openpyxl provides robust support for .xlsx files",
+    "Adaptive distribution charts should dynamically adjust axis labels and data buckets based on the uploaded data structure"
+  ],
+  "updated_at": "2026-03-21T17:42:33.364426",
+  "session_count": 2
+}

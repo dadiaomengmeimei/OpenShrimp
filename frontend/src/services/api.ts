@@ -2,7 +2,7 @@ import axios from 'axios'
 
 const api = axios.create({
   baseURL: '/api',
-  timeout: 60000,
+  timeout: 300000,
 })
 
 // ─── Auth token interceptor ───
@@ -91,6 +91,8 @@ export const listApps = () => api.get<AppInfo[]>('/apps').then(r => r.data)
 export const getApp = (id: string) => api.get<AppInfo>(`/apps/${id}`).then(r => r.data)
 export const createApp = (data: Partial<AppInfo>) => api.post<AppInfo>('/apps', data).then(r => r.data)
 export const deleteApp = (id: string) => api.delete(`/apps/${id}`).then(r => r.data)
+export const updateAppInfo = (id: string, data: { name?: string; description?: string; icon?: string }) =>
+  api.put<AppInfo>(`/apps/${id}/info`, data).then(r => r.data)
 
 // ─── Market APIs ───
 
@@ -104,6 +106,22 @@ export const unpublishApp = (appId: string) => api.post<AppInfo>(`/apps/${appId}
 
 export const adminListUsers = () => api.get<UserInfo[]>('/admin/users').then(r => r.data)
 export const adminListAllApps = () => api.get<AppInfo[]>('/admin/apps').then(r => r.data)
+
+// ─── Generic App File Upload API ───
+
+export interface GenericUploadResult {
+  ok: boolean
+  file_path: string
+  original_name: string
+  size: number
+  ext: string
+}
+
+export const uploadFileForApp = (appId: string, file: File) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return api.post<GenericUploadResult>(`/apps/${appId}/upload`, fd).then(r => r.data)
+}
 
 // ─── Excel Analyzer APIs ───
 
@@ -151,7 +169,7 @@ export const queryDocument = (sessionId: string, question: string) =>
 // ─── Agent APIs (SSE streaming) ───
 
 export interface AgentEvent {
-  type: 'start' | 'log' | 'text_delta' | 'tool_call' | 'tool_result' | 'file_modified' | 'done' | 'error' | 'skills_updated' | '_loop_done'
+  type: 'start' | 'log' | 'text_delta' | 'tool_call' | 'tool_result' | 'file_modified' | 'done' | 'error' | 'skills_updated' | 'scope_warning' | '_loop_done'
   message?: string
   delta?: string
   tool?: string
@@ -170,6 +188,8 @@ export interface AgentEvent {
   count?: number
   items?: string[]
   iterations?: number
+  reason?: string
+  suggestion?: string
 }
 
 // Helper: attach auth token to fetch requests (for SSE streams)

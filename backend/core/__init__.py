@@ -1,3 +1,3 @@
 """
-Core shared modules: LLM, ASR, and other platform-level services.
+Core shared modules: LLM, ASR, File Toolkit, and other platform-level services.
 """

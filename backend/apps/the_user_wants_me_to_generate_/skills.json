@@ -1,0 +1,15 @@
+{
+  "items": [
+    "For multi-turn document generation apps, maintain session state storing both the semantic outline and generated file paths to enable iterative refinement.",
+    "Split FastAPI sub-apps into config/models/prompts/service/main modules when logic exceeds 150 lines or crosses distinct concern boundaries.",
+    "Separate LLM content generation (outlines) from document rendering (python-pptx) to allow text-level modifications before final file generation.",
+    "Provide downloadable FileResponse endpoints for generated assets, with storage paths isolated per session.",
+    "Support iterative refinement workflows where users pivot from initial generation ('create PPT about X') to specific adjustments ('change theme to dark', 'add slide about Y').",
+    "Implement theme/configuration systems that constrain visual choices while allowing runtime customization via chat commands.",
+    "When extending chat apps to support file uploads, audit existing utilities first—dedicated file parsers (Excel/PDF/Word) are often already implemented but not wired to the API.",
+    "Integrate file uploads into existing text flows by extracting content via utility modules and prepending it to the user prompt, maintaining backward compatibility with text-only inputs.",
+    "Normalize multi-modal inputs into unified text content at the API entry point to avoid refactoring downstream business logic and LLM prompt templates."
+  ],
+  "updated_at": "2026-03-21T15:42:58.841963",
+  "session_count": 2
+}

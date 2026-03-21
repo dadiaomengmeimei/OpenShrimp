@@ -5,12 +5,14 @@ import { getApp, AppInfo } from '../services/api'
 import ExcelAnalyzer from '../components/ExcelAnalyzer'
 import RagReader from '../components/RagReader'
 import GenericApp from '../components/GenericApp'
+import AppInfoEditModal from '../components/AppInfoEditModal'
 
 export default function AppPage() {
   const { appId } = useParams<{ appId: string }>()
   const navigate = useNavigate()
   const [app, setApp] = useState<AppInfo | null>(null)
   const [loading, setLoading] = useState(true)
+  const [showEditInfo, setShowEditInfo] = useState(false)
 
   useEffect(() => {
     if (!appId) return
@@ -37,7 +39,7 @@ export default function AppPage() {
       case 'rag_reader':
         return <RagReader />
       default:
-        return <GenericApp appId={app.id} appName={app.name} />
+        return <GenericApp appId={app.id} appName={app.name} appConfig={app.config} />
     }
   }
 
@@ -61,7 +63,11 @@ export default function AppPage() {
               </div>
             </div>
           </div>
-          <button className="p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors">
+          <button
+            onClick={() => setShowEditInfo(true)}
+            className="p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+            title="Edit app info"
+          >
             <Settings size={18} />
           </button>
         </div>
@@ -71,6 +77,18 @@ export default function AppPage() {
       <main className="max-w-7xl mx-auto px-6 py-6">
         {renderAppContent()}
       </main>
+
+      {/* Edit Info Modal */}
+      {showEditInfo && app && (
+        <AppInfoEditModal
+          app={app}
+          onClose={() => setShowEditInfo(false)}
+          onSaved={(updated) => {
+            setApp(updated)
+            setShowEditInfo(false)
+          }}
+        />
+      )}
     </div>
   )
 }

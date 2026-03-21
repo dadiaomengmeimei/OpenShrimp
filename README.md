@@ -174,7 +174,7 @@ cd ..
 5. **Start the backend**
 
 ```bash
-uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude 'backend/apps/*'
 ```
 
 6. **Start the frontend** (in a new terminal)
@@ -220,8 +220,7 @@ All configuration is managed through the `.env` file:
 openshrimp/
 ├── backend/
 │   ├── agent/           # AI coding agent (generates & edits apps)
-│   │   ├── code_agent.py       # Main agentic loop with tool use
-│   │   └── pi-worker/          # TypeScript agent runner
+│   │   └── code_agent.py       # Main agentic loop with tool use
 │   ├── api/             # Platform REST API routes
 │   ├── apps/            # Generated sub-apps (each is a FastAPI router)
 │   ├── config/          # Settings & environment config
