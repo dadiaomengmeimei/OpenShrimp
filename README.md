@@ -26,8 +26,13 @@ Create, manage, publish, and share AI applications — all from a single platfor
 - [✨ Features](#-features)
   - [🤖 One-Sentence App Generation](#-one-sentence-app-generation)
   - [✏️ Natural Language App Editing](#️-natural-language-app-editing)
+  - [🔧 Auto-Fix (Error & Behavior)](#-auto-fix-error--behavior)
+  - [🧠 Skills Memory System](#-skills-memory-system)
   - [🏪 App Market](#-app-market)
   - [📊 Built-in Apps](#-built-in-apps)
+  - [🛠️ Agent Toolbox](#️-agent-toolbox)
+  - [🗜️ Context Compression](#️-context-compression)
+  - [👁️ Real-time Supervision](#️-real-time-supervision)
   - [🔌 Any LLM Provider](#-any-llm-provider)
   - [👥 Multi-User & Auth](#-multi-user--auth)
 - [🚀 Getting Started](#-getting-started)
@@ -86,6 +91,37 @@ Already have an app? Tell OpenShrimp what to change in plain language. The AI ag
 
 </div>
 
+### 🔧 Auto-Fix (Error & Behavior)
+
+When an app crashes, OpenShrimp automatically catches the runtime error and offers **one-click Auto-Fix**. The agent reads the traceback, analyzes root cause, locates the buggy code, and applies a surgical fix — all without you touching a single line of code.
+
+Even when there's no crash but the output is simply _wrong_, you can use **Behavior Fix** mode: describe what you expected, and the agent compares the actual vs. expected output to understand the gap and rewrite the logic accordingly.
+
+Both modes support **real-time supervision** — you can guide the agent with additional messages during the fix process.
+
+<div align="right">
+
+[![Back to top][back-to-top]](#readme-top)
+
+</div>
+
+### 🧠 Skills Memory System
+
+After every agent session (generation, editing, or debugging), OpenShrimp automatically **extracts reusable skills** from the conversation:
+
+- **User preferences** — what you really wanted, style choices, constraints
+- **Debugging lessons** — errors encountered, root causes, how they were fixed
+- **Architecture decisions** — why certain patterns were chosen
+- **Potential extensions** — features hinted at but not yet built
+
+These skills are persisted per-app and loaded into context for future sessions. The agent gets **smarter with every interaction** — it won't repeat past mistakes and will respect your preferences.
+
+<div align="right">
+
+[![Back to top][back-to-top]](#readme-top)
+
+</div>
+
 ### 🏪 App Market
 
 Publish your apps to a shared marketplace. Other users can discover, browse, and add public apps to their own workspace with one click.
@@ -102,10 +138,66 @@ Publish your apps to a shared marketplace. Other users can discover, browse, and
 
 Comes with ready-to-use apps out of the box:
 
-- **Excel Analyzer** — Upload Excel files for AI-powered data analysis and chart generation
-- **RAG Reader** — Upload documents for AI-powered reading and question answering
+- **Excel Analyzer** — Upload Excel files for AI-powered data analysis, pivot tables, and chart generation
+- **RAG Reader** — Upload documents (PDF, TXT, etc.) for AI-powered reading and question answering with source citations
+
+These built-in apps also serve as reference implementations — the coding agent can use them as templates when generating similar applications.
 
 ![Built-in Apps](/assets/feature-builtin.png)
+
+<div align="right">
+
+[![Back to top][back-to-top]](#readme-top)
+
+</div>
+
+### 🛠️ Agent Toolbox
+
+The coding agent is not just a prompt-to-code generator. It has a full **developer toolbox**:
+
+| Tool | Description |
+| --- | --- |
+| `ls` | Browse directories — understand project structure |
+| `read` | Read file contents — analyze existing code |
+| `write` | Create new files — scaffold from scratch |
+| `edit` | Surgical text replacement — modify without rewriting |
+| `bash` | Run shell commands — test, install deps, check output |
+| `update_app_features` | Toggle UI capabilities (e.g., enable file upload) |
+
+The agent uses these tools in an **autonomous iterative loop** (up to 200 iterations): write code → execute → check errors → fix → repeat — just like a real developer.
+
+<div align="right">
+
+[![Back to top][back-to-top]](#readme-top)
+
+</div>
+
+### 🗜️ Context Compression
+
+Long agent sessions don't blow up the token budget. Every 5 iterations, OpenShrimp automatically **compresses conversation history** into a structured summary, preserving:
+
+- Original user goal
+- Files created or modified
+- Key decisions made
+- Errors encountered and resolutions
+- Current progress state
+
+This allows the agent to run **200+ iterations** on complex tasks without losing context or hitting token limits.
+
+<div align="right">
+
+[![Back to top][back-to-top]](#readme-top)
+
+</div>
+
+### 👁️ Real-time Supervision
+
+You're always in control. While the agent is running:
+
+- **📡 Live SSE Streaming** — Watch every tool call, file modification, and agent thought in real-time
+- **📝 Message Injection** — Send guidance messages mid-generation (e.g., _"don't use that library, use X instead"_)
+- **⛔ Interrupt** — Stop the agent at any point if it's going off track
+- **🔍 Self-Verification** — After generation, the agent automatically validates app structure, Python syntax, and module imports. If checks fail, it triggers an auto-repair loop.
 
 <div align="right">
 
@@ -239,10 +331,13 @@ openshrimp/
 **How it works:**
 
 1. User describes an app in the **AgentModal** (e.g. _"Build a todo list with priorities"_)
-2. The **Coding Agent** receives the prompt and uses tools (read, write, bash, edit) to scaffold the app
-3. A new sub-app directory is created under `backend/apps/<app_id>/`
-4. The app is registered in the database and immediately available in the UI
-5. Users can iterate on the app with natural language edits
+2. The **Coding Agent** receives the prompt and uses tools (`ls`, `read`, `write`, `edit`, `bash`) to scaffold the app
+3. The agent iterates autonomously — writing code, running tests, fixing errors — up to 200 iterations
+4. **Self-verification** checks structure, syntax, and imports; auto-repairs if anything fails
+5. A new sub-app directory is created under `backend/apps/<app_id>/` with its own isolated `.venv`
+6. Dependencies are auto-detected and installed; the app is registered and immediately available
+7. **Skills** are extracted from the session and saved for future context
+8. Users can iterate on the app with natural language edits, or use **Auto-Fix** for runtime errors
 
 <div align="right">
 
