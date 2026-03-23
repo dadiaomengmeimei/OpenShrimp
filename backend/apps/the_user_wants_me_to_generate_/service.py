@@ -169,7 +169,49 @@ async def generate_outline(topic: str, theme: str = DEFAULT_THEME, slide_count: 
         {"role": "user", "content": f"请为以下主题生成PPT大纲，使用{theme}主题，共{slide_count}页：\n\n{topic}"}
     ]
     
-    return await _generate_outline_with_messages(messages, topic, theme, slide_count)
+    try:
+        # Use timeout and limit tokens to ensure faster response
+        response = await asyncio.wait_for(
+            chat_completion(messages, max_tokens=2000),
+            timeout=60.0  # 60 second timeout for outline generation
+        )
+    except asyncio.TimeoutError:
+        # Use fallback outline on timeout
+        data = _create_fallback_outline(topic, theme, slide_count)
+    except Exception as e:
+        # Use fallback outline on any error
+        print(f"[PPT Generator] LLM error in generate_outline: {type(e).__name__}: {e}")
+        data = _create_fallback_outline(topic, theme, slide_count)
+    else:
+        # Parse LLM response
+        data = parse_json_from_llm(response)
+        if not data:
+            # Fallback: create a simple outline
+            data = _create_fallback_outline(topic, theme, slide_count)
+    
+    # Parse slides
+    slides = []
+    for slide_data in data.get("slides", []):
+        try:
+            slide_type = SlideType(slide_data.get("type", "content"))
+        except ValueError:
+            slide_type = SlideType.CONTENT
+        
+        slides.append(SlideContent(
+            type=slide_type,
+            title=slide_data.get("title", "Untitled"),
+            content=slide_data.get("content"),
+            subtitle=slide_data.get("subtitle"),
+            notes=slide_data.get("notes"),
+        ))
+    
+    return PPTOutline(
+        title=data.get("title", topic),
+        subtitle=data.get("subtitle"),
+        theme=data.get("theme", theme),
+        total_slides=data.get("total_slides", len(slides)),
+        slides=slides,
+    )
 
 
 async def generate_outline_from_content(content: str, theme: str = DEFAULT_THEME, slide_count: int = 8, user_request: str = "") -> PPTOutline:
