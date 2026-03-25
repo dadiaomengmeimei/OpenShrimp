@@ -147,7 +147,15 @@ async def list_market_apps(user_id: Optional[str] = None) -> list[dict]:
             )
             added_ids = {row[0] for row in ua_result.all()}
             for app in apps:
-                app["added_by_user"] = app["id"] in added_ids or app.get("author_id") == user_id
+                # An app is "added" if:
+                # - user explicitly added it (in UserApp table)
+                # - user owns it (author_id == user_id)
+                # - it's a built-in/platform app (author_id is None) — visible to all users
+                app["added_by_user"] = (
+                    app["id"] in added_ids
+                    or app.get("author_id") == user_id
+                    or app.get("author_id") is None
+                )
         return apps
 
 

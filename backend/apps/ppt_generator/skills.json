@@ -1,0 +1,11 @@
+{
+  "items": [
+    "Enable file upload UI features using the update_app_features system tool before implementing backend handlers to ensure frontend-backend parity",
+    "Separate document-based generation logic into dedicated service functions distinct from topic-based generation to handle different input modalities cleanly",
+    "Store LLM prompt templates in a dedicated prompts.py file using distinct constants for different generation modes like DOCUMENT_BASED_GENERATION_PROMPT",
+    "Detect uploaded files in chat handlers and route to document parsing logic that extracts structured content for automated presentation generation",
+    "Maintain clean architecture by keeping FastAPI route handlers in main.py lean and delegating all business logic to service.py functions"
+  ],
+  "updated_at": "2026-03-23T10:13:50.500255",
+  "session_count": 1
+}

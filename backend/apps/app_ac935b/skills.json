@@ -3,7 +3,7 @@
     "Structure LLM-powered apps with clear separation of concerns: models.py for Pydantic schemas, prompts.py for LLM templates, service.py for business logic, and main.py for FastAPI routing.",
     "For classical Chinese poetry generation, implement prompt templates that enforce strict Tang dynasty formats: 5 or 7 characters per line, 4 or 8 lines total, specific tonal patterns (平仄), and traditional imagery to ensure stylistic authenticity.",
     "Always verify module imports immediately after creating multi-file Python packages; relative imports (from .module) may fail in certain execution contexts or test harnesses, requiring absolute imports or adjusted Python paths.",
-    "OpenShrimp platform apps must expose both a FastAPI APIRouter instance and a handle_chat function in main.py to properly integrate with the platform's chat interface protocol.",
+    "AppShrimp platform apps must expose both a FastAPI APIRouter instance and a handle_chat function in main.py to properly integrate with the platform's chat interface protocol.",
     "When users submit requests in Chinese, implement full UTF-8 support and culturally appropriate system prompts with classical literary examples to ensure the generated content matches traditional aesthetic standards."
   ],
   "updated_at": "2026-03-21T00:32:06.680040",

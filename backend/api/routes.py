@@ -4,7 +4,8 @@ from __future__ import annotations
 import os
 import traceback
 
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Request
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -12,9 +13,37 @@ import uuid
 from pathlib import Path
 
 from backend.core import app_registry
-from backend.core.auth import get_current_user, get_optional_user, require_admin
+from backend.core.auth import get_current_user, get_current_user_from_token_or_header, get_optional_user, require_admin
 
 router = APIRouter(prefix="/api", tags=["platform"])
+
+
+# ---------- Unified Error Handler Registration ----------
+# Call this from main.py to install a global exception handler that normalizes
+# all HTTPException responses to include both 'detail' (FastAPI default) and
+# 'message' (for frontend compatibility).
+
+def register_error_handlers(app):
+    """Register global exception handlers on the FastAPI app for unified error format."""
+
+    @app.exception_handler(HTTPException)
+    async def unified_http_exception_handler(request: Request, exc: HTTPException):
+        """Normalize HTTPException responses so they always have a 'message' field.
+
+        This means both old-style {detail: "..."} and new-style {message: "..."}
+        will be present, making frontend error extraction trivial.
+        """
+        detail = exc.detail
+        if isinstance(detail, dict):
+            # Structured error (e.g. auto-fixable app errors) — ensure 'message' exists
+            body = {**detail}
+            if "message" not in body:
+                body["message"] = str(detail)
+            body["detail"] = detail
+        else:
+            # Simple string error
+            body = {"detail": detail, "message": str(detail)}
+        return JSONResponse(status_code=exc.status_code, content=body)
 
 
 # ---------- Schemas ----------
@@ -153,10 +182,11 @@ async def remove_from_market(app_id: str, user: dict = Depends(get_current_user)
 
 @router.post("/apps/{app_id}/publish")
 async def publish_app(app_id: str, user: dict = Depends(get_current_user)):
-    """Publish an app to the market. Only owner or admin."""
+    """Publish an app to the market. Owner, admin, or apps with no owner."""
     app = await app_registry.get_app(app_id)
     if not app:
         raise HTTPException(404, "App not found")
+    # Allow: admin, owner, or unowned apps
     if app.get("author_id") and app["author_id"] != user["id"] and not user.get("is_admin"):
         raise HTTPException(403, "You can only publish your own apps")
     result = await app_registry.publish_app(app_id, user["id"])
@@ -167,10 +197,11 @@ async def publish_app(app_id: str, user: dict = Depends(get_current_user)):
 
 @router.post("/apps/{app_id}/unpublish")
 async def unpublish_app(app_id: str, user: dict = Depends(get_current_user)):
-    """Remove an app from the market. Only owner or admin."""
+    """Remove an app from the market. Owner, admin, or apps with no owner."""
     app = await app_registry.get_app(app_id)
     if not app:
         raise HTTPException(404, "App not found")
+    # Allow: admin, owner, or unowned apps
     if app.get("author_id") and app["author_id"] != user["id"] and not user.get("is_admin"):
         raise HTTPException(403, "You can only unpublish your own apps")
     result = await app_registry.unpublish_app(app_id)
@@ -218,12 +249,56 @@ async def generic_upload(app_id: str, file: UploadFile = File(...), user: dict =
     }
 
 
+# ---------- Web Mode Static File Serving ----------
+
+@router.get("/apps/{app_id}/web")
+async def serve_web_app(app_id: str, user: dict = Depends(get_current_user_from_token_or_header)):
+    """Serve the main web page for web-mode apps."""
+    from backend.agent.code_agent import APPS_DIR
+    app_dir = APPS_DIR / app_id
+    
+    # Try static/index.html first, then index.html in root
+    for candidate in [app_dir / "static" / "index.html", app_dir / "index.html"]:
+        if candidate.exists():
+            return HTMLResponse(candidate.read_text(encoding="utf-8"))
+    
+    raise HTTPException(404, f"No web interface found for app '{app_id}'. Expected static/index.html")
+
+
+@router.get("/apps/{app_id}/static/{file_path:path}")
+async def serve_static_file(app_id: str, file_path: str, user: dict = Depends(get_current_user_from_token_or_header)):
+    """Serve static files (JS, CSS, images) for web-mode apps."""
+    from backend.agent.code_agent import APPS_DIR
+    app_dir = APPS_DIR / app_id / "static"
+    target = (app_dir / file_path).resolve()
+    
+    # Security: prevent path traversal
+    if not str(target).startswith(str(app_dir.resolve())):
+        raise HTTPException(403, "Access denied")
+    
+    if not target.exists() or not target.is_file():
+        raise HTTPException(404, f"Static file not found: {file_path}")
+    
+    # Determine MIME type
+    import mimetypes
+    mime_type, _ = mimetypes.guess_type(str(target))
+    return FileResponse(path=str(target), media_type=mime_type or "application/octet-stream")
+
+
 # ---------- Chat Route ----------
 
 @router.post("/apps/{app_id}/chat")
 async def app_chat(app_id: str, req: AppChatRequest, user: dict = Depends(get_current_user)):
-    """Forward a chat request to the sub-app's handler."""
+    """Forward a chat request to the sub-app's handler.
+    
+    App-internal chat uses the fast LLM model (qwen3-next-new) for faster responses.
+    The primary model (kimi-k2.5) is reserved for app creation/modification/fix.
+    """
     print(f"[api] POST /apps/{app_id}/chat | user={user.get('username')} | msgs={len(req.messages)}")
+
+    # Enable fast model for app-internal chat calls
+    from backend.core.llm_service import set_use_fast_model, reset_use_fast_model
+    fast_token = set_use_fast_model(True)
 
     # Check and install dependencies before loading the app module
     from backend.agent.code_agent import _check_and_install_deps, APPS_DIR
@@ -288,6 +363,9 @@ async def app_chat(app_id: str, req: AppChatRequest, user: dict = Depends(get_cu
                 "auto_fixable": True,
             },
         )
+    finally:
+        # Always reset the fast model context
+        reset_use_fast_model(fast_token)
 
 
 @router.post("/apps/{app_id}/test")

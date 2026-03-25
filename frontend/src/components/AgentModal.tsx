@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { X, Sparkles, Loader2, Terminal, FileCode, CheckCircle, AlertCircle, Code, Wrench, ChevronDown, ChevronUp, Brain, StopCircle, MessageSquare } from 'lucide-react'
+import { X, Sparkles, Loader2, Terminal, FileCode, CheckCircle, AlertCircle, Code, Wrench, ChevronDown, ChevronUp, Brain, StopCircle, MessageSquare, Monitor, MessageCircle } from 'lucide-react'
 import { generateAppStream, AgentEvent, getAppSkills, interruptAgent, injectAgentMessage } from '../services/api'
 
 interface Props {
@@ -31,6 +31,7 @@ export default function AgentModal({ onClose, onComplete, editAppId, editAppName
   const [showSkills, setShowSkills] = useState(false)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [supervisionInput, setSupervisionInput] = useState('')
+  const [appMode, setAppMode] = useState<'chat' | 'web'>('chat')
   const logEndRef = useRef<HTMLDivElement>(null)
   const logIdRef = useRef(0)
 
@@ -81,7 +82,7 @@ export default function AgentModal({ onClose, onComplete, editAppId, editAppName
             case 'start':
               setMethod(event.method || '')
               if (event.session_id) setSessionId(event.session_id)
-              addLog('start', `Agent method: ${event.method || 'unknown'}`)
+              addLog('start', `Agent method: ${event.method || 'unknown'}${appMode === 'web' ? ' (web mode)' : ''}`)
               break
             case 'log':
               addLog('log', event.message || '')
@@ -106,6 +107,10 @@ export default function AgentModal({ onClose, onComplete, editAppId, editAppName
               setSessionId(null)
               setFilesModified(event.files_modified || [])
               addLog('done', '✨ Generation complete!')
+              // For web mode, show a hint about opening in new tab
+              if (appMode === 'web' && event.app_id) {
+                addLog('log', `🌐 Web app created! It will open in a new browser tab.`)
+              }
               break
             case 'scope_warning':
               setFinished(true)
@@ -122,8 +127,9 @@ export default function AgentModal({ onClose, onComplete, editAppId, editAppName
               setError(event.error || 'Unknown error')
               addLog('error', `❌ Error: ${event.error}`)
               break
-          }
         }
+        },
+        appMode,
       )
     } catch (err: any) {
       setError(err.message || 'Generation failed')
@@ -242,6 +248,45 @@ export default function AgentModal({ onClose, onComplete, editAppId, editAppName
                 className="w-full px-3 py-2 bg-slate-800/50 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm resize-none disabled:opacity-50"
               />
             </div>
+
+            {/* Mode selection (only for new apps, not edits) */}
+            {!editAppId && !running && !finished && (
+              <div>
+                <label className="block text-sm text-slate-400 mb-1.5">App Mode</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAppMode('chat')}
+                    className={`flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-all ${
+                      appMode === 'chat'
+                        ? 'border-purple-500 bg-purple-500/10 text-purple-300'
+                        : 'border-slate-600 bg-slate-800/50 text-slate-400 hover:border-slate-500'
+                    }`}
+                  >
+                    <MessageCircle size={16} />
+                    <div className="text-left">
+                      <p className="font-medium">Chat Mode</p>
+                      <p className="text-[10px] opacity-70">Embedded in platform chat UI</p>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAppMode('web')}
+                    className={`flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-all ${
+                      appMode === 'web'
+                        ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300'
+                        : 'border-slate-600 bg-slate-800/50 text-slate-400 hover:border-slate-500'
+                    }`}
+                  >
+                    <Monitor size={16} />
+                    <div className="text-left">
+                      <p className="font-medium">Web Mode</p>
+                      <p className="text-[10px] opacity-70">Standalone page in new tab</p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            )}
 
             {!running && !finished && (
               <div>

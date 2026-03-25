@@ -115,6 +115,36 @@ async def get_current_user(
         return user.to_dict()
 
 
+async def get_current_user_from_token_or_header(
+    token: Optional[str] = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+) -> dict:
+    """
+    Extract and validate the current user from either:
+    1. A query parameter `?token=xxx` (for web page access in new tabs)
+    2. The Authorization header (standard API calls)
+    Raises 401 if not authenticated.
+    """
+    raw_token = None
+    if token:
+        raw_token = token
+    elif credentials:
+        raw_token = credentials.credentials
+
+    if not raw_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    payload = _verify_token(raw_token)
+    if not payload:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+
+    async with async_session() as session:
+        user = await session.get(User, payload["sub"])
+        if not user:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        return user.to_dict()
+
+
 async def get_optional_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> Optional[dict]:

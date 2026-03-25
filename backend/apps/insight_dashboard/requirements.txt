@@ -1,0 +1,6 @@
+# Insight Dashboard - Data Analysis & Visualization App
+# Core dependencies (platform already provides FastAPI, pydantic, pandas, openpyxl, etc.)
+# Add specific dependencies below if needed
+
+# No additional third-party dependencies required
+# Uses platform's built-in: FastAPI, pandas, openpyxl, python-multipart

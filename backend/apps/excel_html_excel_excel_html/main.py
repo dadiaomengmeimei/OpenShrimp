@@ -392,14 +392,14 @@ async def generate_html_from_excel(headers: List[str], rows: List[List[Any]], so
         </section>
         
         <div class="footer">
-            <p>由 OpenShrimp AI App Store 自动生成</p>
+            <p>由 AppShrimp AI App Store 自动生成</p>
         </div>
     </div>
 </body>
 </html>'''
     
     # 保存HTML文件
-    output_dir = Path("/Users/morphe/Desktop/proj/tme/OpenShrimp/backend/apps/excel_html_excel_excel_html/output")
+    output_dir = Path("/Users/morphe/Desktop/proj/tme/AppShrimp/backend/apps/excel_html_excel_excel_html/output")
     output_dir.mkdir(exist_ok=True)
     
     html_path = output_dir / f"{Path(source_filename).stem}_charts.html"

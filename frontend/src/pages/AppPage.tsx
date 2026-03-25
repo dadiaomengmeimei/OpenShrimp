@@ -32,6 +32,17 @@ export default function AppPage() {
 
   if (!app) return null
 
+  // Web mode: redirect to standalone web page in new tab
+  const isWebMode = app.config?.mode === 'web'
+
+  const handleOpenWebApp = () => {
+    const token = localStorage.getItem('auth_token')
+    const url = token
+      ? `/api/apps/${app.id}/web?token=${encodeURIComponent(token)}`
+      : `/api/apps/${app.id}/web`
+    window.open(url, '_blank')
+  }
+
   const renderAppContent = () => {
     switch (app.id) {
       case 'excel_analyzer':
@@ -75,7 +86,27 @@ export default function AppPage() {
 
       {/* App Content */}
       <main className="max-w-7xl mx-auto px-6 py-6">
-        {renderAppContent()}
+        {isWebMode ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="text-6xl mb-4">🌐</div>
+            <h2 className="text-xl font-semibold text-white mb-2">Standalone Web Application</h2>
+            <p className="text-slate-400 mb-6 max-w-md">
+              This app runs as a standalone web page in a new browser tab with its own full interface.
+            </p>
+            <button
+              onClick={handleOpenWebApp}
+              className="px-6 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-xl text-sm font-medium transition-all shadow-lg shadow-cyan-500/25 flex items-center gap-2"
+            >
+              <span>🚀</span>
+              Open in New Tab
+            </button>
+            <p className="text-xs text-slate-500 mt-4">
+              The app will open at: <code className="text-slate-400">/api/apps/{app.id}/web</code>
+            </p>
+          </div>
+        ) : (
+          renderAppContent()
+        )}
       </main>
 
       {/* Edit Info Modal */}

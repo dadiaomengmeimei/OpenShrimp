@@ -1,0 +1,1139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据库分布分析器 | Database Distribution Analyzer</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'Noto Sans SC', 'sans-serif'],
+                    },
+                    colors: {
+                        primary: {
+                            50: '#eff6ff',
+                            100: '#dbeafe',
+                            200: '#bfdbfe',
+                            300: '#93c5fd',
+                            400: '#60a5fa',
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            700: '#1d4ed8',
+                            800: '#1e40af',
+                            900: '#1e3a8a',
+                        }
+                    },
+                    animation: {
+                        'fade-in': 'fadeIn 0.5s ease-out',
+                        'slide-up': 'slideUp 0.5s ease-out',
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                    },
+                    keyframes: {
+                        fadeIn: {
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' },
+                        },
+                        slideUp: {
+                            '0%': { opacity: '0', transform: 'translateY(20px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        
+        /* Gradient backgrounds */
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .gradient-bg-2 {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        .gradient-bg-3 {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+        .gradient-text {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        /* Glass morphism effect */
+        .glass {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        .glass-dark {
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        /* Hover card effect */
+        .hover-card {
+            transition: all 0.3s ease;
+        }
+        .hover-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.15);
+        }
+        
+        /* Loading spinner */
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            width: 24px;
+            height: 24px;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Pulse animation for dots */
+        .pulse-dot {
+            animation: pulse-dot 1.5s ease-in-out infinite;
+        }
+        .pulse-dot:nth-child(2) { animation-delay: 0.2s; }
+        .pulse-dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes pulse-dot {
+            0%, 80%, 100% { opacity: 0; transform: scale(0.8); }
+            40% { opacity: 1; transform: scale(1); }
+        }
+        
+        /* Toast notification */
+        .toast {
+            animation: toast-slide 0.3s ease-out;
+        }
+        @keyframes toast-slide {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        /* File upload zone */
+        .upload-zone {
+            border: 2px dashed #cbd5e1;
+            transition: all 0.3s ease;
+        }
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: #3b82f6;
+            background: rgba(59, 130, 246, 0.05);
+        }
+        
+        /* Chart container */
+        .chart-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-800">
+    
+    <!-- Toast Container -->
+    <div id="toastContainer" class="fixed top-4 right-4 z-50 space-y-2"></div>
+    
+    <!-- Header -->
+    <header class="gradient-bg text-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <div class="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
+                        <i data-lucide="database" class="w-8 h-8"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-2xl font-bold tracking-tight">数据库分布分析器</h1>
+                        <p class="text-white/80 text-sm">智能数据分布可视化与洞察</p>
+                    </div>
+                </div>
+                <div class="hidden md:flex items-center space-x-3">
+                    <span class="px-3 py-1 bg-white/20 rounded-full text-sm backdrop-blur-sm">
+                        <i data-lucide="check-circle" class="w-4 h-4 inline mr-1"></i>
+                        MySQL
+                    </span>
+                    <span class="px-3 py-1 bg-white/20 rounded-full text-sm backdrop-blur-sm">
+                        <i data-lucide="check-circle" class="w-4 h-4 inline mr-1"></i>
+                        PostgreSQL
+                    </span>
+                    <span class="px-3 py-1 bg-white/20 rounded-full text-sm backdrop-blur-sm">
+                        <i data-lucide="check-circle" class="w-4 h-4 inline mr-1"></i>
+                        SQLite
+                    </span>
+                </div>
+            </div>
+        </div>
+    </header>
+    
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <!-- Step 1: Upload Config -->
+        <section id="step1" class="animate-fade-in">
+            <div class="bg-white rounded-2xl shadow-lg p-6 mb-8 hover-card">
+                <div class="flex items-center mb-6">
+                    <div class="w-10 h-10 gradient-bg rounded-full flex items-center justify-center text-white font-bold text-lg mr-4">
+                        1
+                    </div>
+                    <div>
+                        <h2 class="text-xl font-semibold text-slate-900">上传数据库配置</h2>
+                        <p class="text-slate-500 text-sm">支持 JSON 格式或 Key=Value 格式的配置文件</p>
+                    </div>
+                </div>
+                
+                <!-- Upload Zone -->
+                <div id="uploadZone" class="upload-zone rounded-xl p-8 text-center cursor-pointer">
+                    <input type="file" id="configFile" accept=".json,.txt,.conf,.ini" class="hidden">
+                    <div class="mb-4">
+                        <i data-lucide="upload-cloud" class="w-16 h-16 mx-auto text-slate-400"></i>
+                    </div>
+                    <p class="text-slate-700 font-medium mb-2">点击或拖拽配置文件到此处</p>
+                    <p class="text-slate-400 text-sm">支持 .json, .txt, .conf 格式</p>
+                </div>
+                
+                <!-- Config Preview -->
+                <div id="configPreview" class="hidden mt-6">
+                    <div class="flex items-center justify-between mb-3">
+                        <span class="text-sm font-medium text-slate-700">配置预览</span>
+                        <button onclick="resetConfig()" class="text-slate-400 hover:text-slate-600">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                    <pre id="configContent" class="bg-slate-900 text-slate-100 p-4 rounded-lg text-sm overflow-x-auto"></pre>
+                </div>
+                
+                <!-- Manual Config Form -->
+                <div class="mt-6 pt-6 border-t border-slate-200">
+                    <p class="text-sm text-slate-500 mb-4">或者手动输入配置：</p>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">数据库类型</label>
+                            <select id="dbType" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                                <option value="mysql">MySQL</option>
+                                <option value="postgresql">PostgreSQL</option>
+                                <option value="sqlite">SQLite</option>
+                            </select>
+                        </div>
+                        <div id="hostField">
+                            <label class="block text-sm font-medium text-slate-700 mb-1">主机地址</label>
+                            <input type="text" id="dbHost" placeholder="localhost" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                        </div>
+                        <div id="portField">
+                            <label class="block text-sm font-medium text-slate-700 mb-1">端口</label>
+                            <input type="text" id="dbPort" placeholder="3306" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">数据库名</label>
+                            <input type="text" id="dbName" placeholder="my_database" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                        </div>
+                        <div id="userField">
+                            <label class="block text-sm font-medium text-slate-700 mb-1">用户名</label>
+                            <input type="text" id="dbUser" placeholder="root" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                        </div>
+                        <div id="passField">
+                            <label class="block text-sm font-medium text-slate-700 mb-1">密码</label>
+                            <input type="password" id="dbPass" placeholder="••••••" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                        </div>
+                        <div id="tableField">
+                            <label class="block text-sm font-medium text-slate-700 mb-1">表名 <span class="text-slate-400 font-normal">(可选)</span></label>
+                            <input type="text" id="dbTable" placeholder="指定表名可跳过选表步骤" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Connect Button -->
+                <div class="mt-6 flex justify-end">
+                    <button onclick="connectDatabase()" id="connectBtn" class="gradient-bg text-white px-6 py-3 rounded-xl font-medium hover:shadow-lg transition-all flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <span id="connectBtnText">连接数据库</span>
+                        <i data-lucide="arrow-right" class="w-5 h-5"></i>
+                    </button>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Step 2: Select Table -->
+        <section id="step2" class="hidden animate-slide-up">
+            <div class="bg-white rounded-2xl shadow-lg p-6 mb-8 hover-card">
+                <div class="flex items-center mb-6">
+                    <div class="w-10 h-10 gradient-bg-2 rounded-full flex items-center justify-center text-white font-bold text-lg mr-4">
+                        2
+                    </div>
+                    <div>
+                        <h2 class="text-xl font-semibold text-slate-900">选择数据表</h2>
+                        <p class="text-slate-500 text-sm">选择一个要分析的表</p>
+                    </div>
+                </div>
+                
+                <!-- Tables Grid -->
+                <div id="tablesGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <!-- Tables will be inserted here -->
+                </div>
+                
+                <!-- Selected Table Info -->
+                <div id="selectedTableInfo" class="hidden mt-6 p-4 bg-primary-50 rounded-lg border border-primary-200">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm text-slate-500">已选择表</p>
+                            <p id="selectedTableName" class="text-lg font-semibold text-primary-700"></p>
+                        </div>
+                        <button onclick="analyzeTable()" id="analyzeBtn" class="gradient-bg-2 text-white px-6 py-2 rounded-lg font-medium hover:shadow-lg transition-all flex items-center space-x-2">
+                            <span id="analyzeBtnText">开始分析</span>
+                            <i data-lucide="bar-chart-3" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Step 3: Analysis Results - Dashboard Style -->
+        <section id="step3" class="hidden animate-slide-up">
+            <!-- Dashboard Header -->
+            <div class="bg-white rounded-2xl shadow-lg p-6 mb-6">
+                <div class="flex items-center justify-between mb-6">
+                    <div class="flex items-center">
+                        <div class="w-10 h-10 gradient-bg-3 rounded-full flex items-center justify-center text-white font-bold text-lg mr-4">
+                            3
+                        </div>
+                        <div>
+                            <h2 class="text-xl font-semibold text-slate-900">数据仪表盘</h2>
+                            <p class="text-slate-500 text-sm" id="dashboardSubtitle">数据分布可视化与洞察</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <button onclick="exportDashboard()" class="text-slate-500 hover:text-primary-600 px-3 py-2 rounded-lg hover:bg-primary-50 transition-colors text-sm font-medium">
+                            <i data-lucide="download" class="w-4 h-4 inline mr-1"></i>
+                            导出报告
+                        </button>
+                        <button onclick="resetAnalysis()" class="text-slate-400 hover:text-slate-600 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors text-sm">
+                            <i data-lucide="refresh-cw" class="w-4 h-4 inline mr-1"></i>
+                            重新分析
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- KPI Cards -->
+                <div id="statsOverview" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div class="relative overflow-hidden bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-5 text-white">
+                        <div class="absolute -top-4 -right-4 w-20 h-20 bg-white/10 rounded-full"></div>
+                        <div class="absolute -bottom-2 -right-2 w-12 h-12 bg-white/5 rounded-full"></div>
+                        <i data-lucide="rows-3" class="w-5 h-5 mb-2 text-blue-200"></i>
+                        <p class="text-blue-100 text-xs font-medium uppercase tracking-wider">总行数</p>
+                        <p id="statRowCount" class="text-3xl font-bold mt-1">-</p>
+                    </div>
+                    <div class="relative overflow-hidden bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-5 text-white">
+                        <div class="absolute -top-4 -right-4 w-20 h-20 bg-white/10 rounded-full"></div>
+                        <i data-lucide="columns-3" class="w-5 h-5 mb-2 text-purple-200"></i>
+                        <p class="text-purple-100 text-xs font-medium uppercase tracking-wider">字段数</p>
+                        <p id="statColCount" class="text-3xl font-bold mt-1">-</p>
+                    </div>
+                    <div class="relative overflow-hidden bg-gradient-to-br from-pink-500 to-pink-600 rounded-xl p-5 text-white">
+                        <div class="absolute -top-4 -right-4 w-20 h-20 bg-white/10 rounded-full"></div>
+                        <i data-lucide="bar-chart-3" class="w-5 h-5 mb-2 text-pink-200"></i>
+                        <p class="text-pink-100 text-xs font-medium uppercase tracking-wider">分布图表</p>
+                        <p id="statChartCount" class="text-3xl font-bold mt-1">-</p>
+                    </div>
+                    <div class="relative overflow-hidden bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-5 text-white">
+                        <div class="absolute -top-4 -right-4 w-20 h-20 bg-white/10 rounded-full"></div>
+                        <i data-lucide="database" class="w-5 h-5 mb-2 text-emerald-200"></i>
+                        <p class="text-emerald-100 text-xs font-medium uppercase tracking-wider">数据表</p>
+                        <p id="statTableName" class="text-xl font-bold mt-1 truncate">-</p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Column Overview Table -->
+            <div class="bg-white rounded-2xl shadow-lg p-6 mb-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-slate-900 flex items-center">
+                        <i data-lucide="table-2" class="w-5 h-5 mr-2 text-slate-400"></i>
+                        字段概览
+                    </h3>
+                    <span id="colOverviewCount" class="text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded-full"></span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b border-slate-200">
+                                <th class="text-left py-3 px-4 text-slate-500 font-medium">字段名 / 注释</th>
+                                <th class="text-left py-3 px-4 text-slate-500 font-medium">类型</th>
+                                <th class="text-left py-3 px-4 text-slate-500 font-medium">唯一值</th>
+                                <th class="text-left py-3 px-4 text-slate-500 font-medium">空值</th>
+                                <th class="text-left py-3 px-4 text-slate-500 font-medium">填充率</th>
+                                <th class="text-left py-3 px-4 text-slate-500 font-medium">示例值</th>
+                            </tr>
+                        </thead>
+                        <tbody id="columnOverviewBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- AI Insights -->
+            <div id="insightsSection" class="mb-6">
+                <div class="bg-gradient-to-r from-indigo-50 via-purple-50 to-pink-50 border border-indigo-200 rounded-2xl p-6 shadow-lg">
+                    <div class="flex items-start space-x-4">
+                        <div class="p-3 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl shadow-md">
+                            <i data-lucide="sparkles" class="w-6 h-6 text-white"></i>
+                        </div>
+                        <div class="flex-1">
+                            <h3 class="font-bold text-indigo-900 text-lg mb-3">AI 数据洞察</h3>
+                            <div id="insightsContent" class="text-indigo-800 text-sm leading-relaxed prose prose-sm max-w-none">
+                                <div class="flex items-center space-x-2 text-indigo-400">
+                                    <div class="spinner" style="border-top-color: #6366f1; border-color: rgba(99,102,241,0.2); width:16px; height:16px;"></div>
+                                    <span>正在生成智能洞察...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+                
+            <!-- Charts Grid - Dashboard Layout -->
+            <div id="chartsGrid" class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                <!-- Charts will be inserted here -->
+            </div>
+        </section>
+        
+    </main>
+    
+    <!-- Footer -->
+    <footer class="bg-slate-900 text-slate-400 py-8 mt-12">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <p class="text-sm">Database Distribution Analyzer &copy; 2024</p>
+            <p class="text-xs mt-2 text-slate-500">Powered by AppShrimp AI Platform</p>
+        </div>
+    </footer>
+    
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 hidden items-center justify-center">
+        <div class="bg-white rounded-2xl p-8 shadow-2xl text-center">
+            <div class="spinner mx-auto mb-4"></div>
+            <p id="loadingText" class="text-slate-700 font-medium">正在处理...</p>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+        
+        // Global state
+        let currentConfig = null;
+        let selectedTable = null;
+        let charts = [];
+        
+        // API base URL
+        const API_BASE = '/api/apps/db_distribution_analyzer';
+        
+        // Toast notification system
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            
+            const colors = {
+                success: 'bg-green-500',
+                error: 'bg-red-500',
+                info: 'bg-blue-500',
+                warning: 'bg-yellow-500'
+            };
+            
+            const icons = {
+                success: 'check-circle',
+                error: 'x-circle',
+                info: 'info',
+                warning: 'alert-triangle'
+            };
+            
+            toast.className = `toast ${colors[type]} text-white px-4 py-3 rounded-lg shadow-lg flex items-center space-x-2 min-w-[300px]`;
+            toast.innerHTML = `
+                <i data-lucide="${icons[type]}" class="w-5 h-5"></i>
+                <span class="font-medium">${message}</span>
+            `;
+            
+            container.appendChild(toast);
+            lucide.createIcons();
+            
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(100%)';
+                setTimeout(() => toast.remove(), 300);
+            }, 4000);
+        }
+        
+        // Loading overlay
+        function showLoading(text = '正在处理...') {
+            document.getElementById('loadingText').textContent = text;
+            document.getElementById('loadingOverlay').classList.remove('hidden');
+            document.getElementById('loadingOverlay').classList.add('flex');
+        }
+        
+        function hideLoading() {
+            document.getElementById('loadingOverlay').classList.add('hidden');
+            document.getElementById('loadingOverlay').classList.remove('flex');
+        }
+        
+        // File upload handling
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('configFile');
+        
+        uploadZone.addEventListener('click', () => fileInput.click());
+        
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+        
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragover');
+        });
+        
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFileUpload(files[0]);
+            }
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFileUpload(e.target.files[0]);
+            }
+        });
+        
+        async function handleFileUpload(file) {
+            showLoading('正在上传配置文件...');
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const response = await fetch(`${API_BASE}/upload-config`, {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentConfig = data.config;
+                    showToast('配置上传成功', 'success');
+                    
+                    // Show config preview
+                    document.getElementById('configPreview').classList.remove('hidden');
+                    document.getElementById('configContent').textContent = JSON.stringify(data.config, null, 2);
+                    
+                    // Fill form fields
+                    fillFormFromConfig(data.config);
+                } else {
+                    showToast(data.message || '上传失败', 'error');
+                }
+            } catch (error) {
+                showToast('上传失败: ' + error.message, 'error');
+            } finally {
+                hideLoading();
+            }
+        }
+        
+        function fillFormFromConfig(config) {
+            if (config.db_type) document.getElementById('dbType').value = config.db_type;
+            if (config.host) document.getElementById('dbHost').value = config.host;
+            if (config.port) document.getElementById('dbPort').value = config.port;
+            if (config.database) document.getElementById('dbName').value = config.database;
+            if (config.username) document.getElementById('dbUser').value = config.username;
+            if (config.password) document.getElementById('dbPass').value = config.password;
+            if (config.table) document.getElementById('dbTable').value = config.table;
+            
+            updateFormFields();
+        }
+        
+        function resetConfig() {
+            currentConfig = null;
+            document.getElementById('configPreview').classList.add('hidden');
+            document.getElementById('configFile').value = '';
+            showToast('配置已重置', 'info');
+        }
+        
+        // DB Type change handler
+        document.getElementById('dbType').addEventListener('change', updateFormFields);
+        
+        function updateFormFields() {
+            const dbType = document.getElementById('dbType').value;
+            const isSQLite = dbType === 'sqlite';
+            
+            document.getElementById('hostField').style.display = isSQLite ? 'none' : 'block';
+            document.getElementById('portField').style.display = isSQLite ? 'none' : 'block';
+            document.getElementById('userField').style.display = isSQLite ? 'none' : 'block';
+            document.getElementById('passField').style.display = isSQLite ? 'none' : 'block';
+            
+            if (isSQLite) {
+                document.getElementById('dbName').placeholder = 'path/to/database.db';
+            } else {
+                document.getElementById('dbName').placeholder = 'my_database';
+            }
+        }
+        
+        // Connect to database
+        async function connectDatabase() {
+            // Build config from form
+            const config = currentConfig || {
+                db_type: document.getElementById('dbType').value,
+                host: document.getElementById('dbHost').value || undefined,
+                port: document.getElementById('dbPort').value ? parseInt(document.getElementById('dbPort').value) : undefined,
+                database: document.getElementById('dbName').value,
+                username: document.getElementById('dbUser').value || undefined,
+                password: document.getElementById('dbPass').value || undefined,
+            };
+            
+            if (!config.database) {
+                showToast('请输入数据库名称', 'warning');
+                return;
+            }
+            
+            currentConfig = config;
+            
+            showLoading('正在连接数据库...');
+            document.getElementById('connectBtn').disabled = true;
+            
+            try {
+                const response = await fetch(`${API_BASE}/connect`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: JSON.stringify(config)
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    // HTTPException returns {"detail": "error message"}
+                    const errMsg = data.detail || data.message || '连接失败';
+                    showToast(typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg), 'error');
+                } else if (data.success) {
+                    showToast(data.message, 'success');
+                    renderTables(data.tables);
+                    document.getElementById('step2').classList.remove('hidden');
+                    
+                    // If user specified a table name, auto-select it
+                    const specifiedTable = document.getElementById('dbTable').value.trim();
+                    if (specifiedTable && data.tables.includes(specifiedTable)) {
+                        // Auto-select the specified table
+                        selectedTable = specifiedTable;
+                        document.getElementById('selectedTableName').textContent = specifiedTable;
+                        document.getElementById('selectedTableInfo').classList.remove('hidden');
+                        
+                        // Highlight the matching card
+                        const cards = document.querySelectorAll('#tablesGrid > div');
+                        cards.forEach(card => {
+                            if (card.textContent.includes(specifiedTable)) {
+                                card.classList.remove('border-slate-200');
+                                card.classList.add('border-primary-500', 'bg-primary-50');
+                            }
+                        });
+                        
+                        showToast(`已自动选中表: ${specifiedTable}`, 'info');
+                        document.getElementById('step2').scrollIntoView({ behavior: 'smooth' });
+                    } else if (specifiedTable && !data.tables.includes(specifiedTable)) {
+                        showToast(`指定的表 "${specifiedTable}" 不存在，请手动选择`, 'warning');
+                        document.getElementById('step2').scrollIntoView({ behavior: 'smooth' });
+                    } else {
+                        document.getElementById('step2').scrollIntoView({ behavior: 'smooth' });
+                    }
+                } else {
+                    showToast(data.detail || data.message || '连接失败', 'error');
+                }
+            } catch (error) {
+                showToast('连接失败: ' + error.message, 'error');
+            } finally {
+                hideLoading();
+                document.getElementById('connectBtn').disabled = false;
+            }
+        }
+        
+        // Render tables grid
+        function renderTables(tables) {
+            const grid = document.getElementById('tablesGrid');
+            grid.innerHTML = '';
+            
+            tables.forEach(table => {
+                const card = document.createElement('div');
+                card.className = 'bg-slate-50 border-2 border-slate-200 rounded-xl p-4 cursor-pointer hover:border-primary-500 hover:bg-primary-50 transition-all group';
+                card.innerHTML = `
+                    <div class="flex items-center space-x-3">
+                        <div class="p-2 bg-white rounded-lg shadow-sm group-hover:shadow-md transition-shadow">
+                            <i data-lucide="table" class="w-6 h-6 text-slate-400 group-hover:text-primary-500"></i>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p class="font-medium text-slate-900 truncate">${table}</p>
+                            <p class="text-xs text-slate-500">点击选择</p>
+                        </div>
+                    </div>
+                `;
+                card.onclick = () => selectTable(table, card);
+                grid.appendChild(card);
+            });
+            
+            lucide.createIcons();
+        }
+        
+        // Select table
+        function selectTable(tableName, cardElement) {
+            selectedTable = tableName;
+            
+            // Update UI
+            document.querySelectorAll('#tablesGrid > div').forEach(el => {
+                el.classList.remove('border-primary-500', 'bg-primary-50');
+                el.classList.add('border-slate-200');
+            });
+            cardElement.classList.remove('border-slate-200');
+            cardElement.classList.add('border-primary-500', 'bg-primary-50');
+            
+            document.getElementById('selectedTableName').textContent = tableName;
+            document.getElementById('selectedTableInfo').classList.remove('hidden');
+        }
+        
+        // Analyze table
+        async function analyzeTable() {
+            if (!selectedTable || !currentConfig) return;
+            
+            showLoading('正在分析数据分布...');
+            document.getElementById('analyzeBtn').disabled = true;
+            
+            try {
+                const response = await fetch(`${API_BASE}/analyze-table/${encodeURIComponent(selectedTable)}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: JSON.stringify(currentConfig)
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    const errMsg = data.detail || data.message || '分析失败';
+                    showToast(typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg), 'error');
+                } else if (data.success) {
+                    showToast(data.message, 'success');
+                    renderDashboard(data);
+                    document.getElementById('step3').classList.remove('hidden');
+                    document.getElementById('step3').scrollIntoView({ behavior: 'smooth' });
+                } else {
+                    showToast(data.detail || data.message || '分析失败', 'error');
+                }
+            } catch (error) {
+                showToast('分析失败: ' + error.message, 'error');
+            } finally {
+                hideLoading();
+                document.getElementById('analyzeBtn').disabled = false;
+            }
+        }
+        
+        // Render dashboard-style analysis results
+        function renderDashboard(data) {
+            // Update KPI stats
+            document.getElementById('statRowCount').textContent = data.row_count.toLocaleString();
+            document.getElementById('statColCount').textContent = data.column_count;
+            document.getElementById('statChartCount').textContent = data.distributions.length;
+            document.getElementById('statTableName').textContent = data.table_name;
+            document.getElementById('dashboardSubtitle').textContent = `${data.table_name} · ${data.row_count.toLocaleString()} 行 · ${data.column_count} 个字段`;
+            
+            // Render column overview table
+            renderColumnOverview(data.columns || []);
+            
+            // Update insights
+            if (data.insights) {
+                document.getElementById('insightsContent').innerHTML = formatInsights(data.insights);
+            }
+            
+            // Render charts
+            const chartsGrid = document.getElementById('chartsGrid');
+            chartsGrid.innerHTML = '';
+            
+            // Clear existing charts
+            charts.forEach(chart => chart.destroy());
+            charts = [];
+            
+            data.distributions.forEach((dist, index) => {
+                const chartCard = document.createElement('div');
+                chartCard.className = 'bg-white rounded-2xl shadow-lg p-6 hover-card border border-slate-100';
+                
+                const rawTitle = dist.comment || dist.column_name;
+                const title = rawTitle.length > 20 ? rawTitle.substring(0, 20) + '...' : rawTitle;
+                const fullTitle = dist.comment ? `${dist.comment} (${dist.column_name})` : dist.column_name;
+                const chartType = dist.chart_type;
+                const totalValues = dist.values.reduce((a, b) => a + b, 0);
+                const maxVal = Math.max(...dist.values);
+                const maxLabel = dist.labels[dist.values.indexOf(maxVal)];
+                
+                chartCard.innerHTML = `
+                    <div class="flex items-center justify-between mb-1">
+                        <div class="flex items-center space-x-3">
+                            <div class="p-2 ${getChartGradient(index)} rounded-lg shadow-sm">
+                                <i data-lucide="${getChartIcon(chartType)}" class="w-5 h-5 text-white"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-slate-900 text-base" title="${fullTitle}">${title}</h3>
+                                <p class="text-xs text-slate-400">${dist.column_name} · ${getChartTypeLabel(chartType)} · ${dist.labels.length} 个类别</p>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-xs text-slate-400">最多</p>
+                            <p class="text-sm font-semibold text-slate-700">${maxLabel}</p>
+                            <p class="text-xs text-slate-400">${maxVal.toLocaleString()} 条 (${(maxVal/totalValues*100).toFixed(1)}%)</p>
+                        </div>
+                    </div>
+                    <div class="chart-container mt-2">
+                        <canvas id="chart-${index}"></canvas>
+                    </div>
+                    <div class="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
+                        <span>共 ${totalValues.toLocaleString()} 条数据</span>
+                        <span>${dist.labels.length} 个分组</span>
+                    </div>
+                `;
+                
+                chartsGrid.appendChild(chartCard);
+                
+                // Create chart with enhanced styling
+                setTimeout(() => {
+                    const ctx = document.getElementById(`chart-${index}`).getContext('2d');
+                    const chart = createChart(ctx, chartType, dist, index);
+                    charts.push(chart);
+                }, 0);
+            });
+            
+            lucide.createIcons();
+        }
+        
+        // Render column overview table
+        function renderColumnOverview(columns) {
+            const tbody = document.getElementById('columnOverviewBody');
+            tbody.innerHTML = '';
+            document.getElementById('colOverviewCount').textContent = `${columns.length} 个字段`;
+            
+            columns.forEach((col, idx) => {
+                const fillColor = col.fill_rate >= 90 ? 'text-emerald-600 bg-emerald-50' : 
+                                  col.fill_rate >= 70 ? 'text-yellow-600 bg-yellow-50' : 
+                                  'text-red-600 bg-red-50';
+                const fillBarColor = col.fill_rate >= 90 ? 'bg-emerald-500' : 
+                                    col.fill_rate >= 70 ? 'bg-yellow-500' : 'bg-red-500';
+                
+                const displayName = col.comment || col.name;
+                const truncatedName = displayName.length > 20 ? displayName.substring(0, 20) + '...' : displayName;
+                
+                const row = document.createElement('tr');
+                row.className = `border-b border-slate-50 hover:bg-slate-50 transition-colors ${idx % 2 === 0 ? '' : 'bg-slate-25'}`;
+                row.innerHTML = `
+                    <td class="py-3 px-4 font-medium text-slate-800">
+                        <div title="${col.comment ? col.comment + ' (' + col.name + ')' : col.name}">
+                            <span class="text-sm">${truncatedName}</span>
+                            ${col.comment ? '<br><code class="text-xs text-slate-400">' + col.name + '</code>' : ''}
+                        </div>
+                    </td>
+                    <td class="py-3 px-4">
+                        <span class="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">${col.type}</span>
+                    </td>
+                    <td class="py-3 px-4 text-slate-600">${col.unique_count.toLocaleString()}</td>
+                    <td class="py-3 px-4 text-slate-600">${col.null_count.toLocaleString()}</td>
+                    <td class="py-3 px-4">
+                        <div class="flex items-center space-x-2">
+                            <div class="w-16 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                <div class="h-full ${fillBarColor} rounded-full" style="width: ${col.fill_rate}%"></div>
+                            </div>
+                            <span class="text-xs font-medium ${fillColor} px-1.5 py-0.5 rounded">${col.fill_rate}%</span>
+                        </div>
+                    </td>
+                    <td class="py-3 px-4">
+                        <div class="flex flex-wrap gap-1">
+                            ${col.sample_values.slice(0, 3).map(v => `<span class="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded truncate max-w-[120px]" title="${v}">${v.length > 15 ? v.substring(0, 15) + '...' : v}</span>`).join('')}
+                        </div>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+        
+        function getChartGradient(index) {
+            const gradients = [
+                'bg-gradient-to-br from-blue-500 to-blue-600',
+                'bg-gradient-to-br from-purple-500 to-purple-600',
+                'bg-gradient-to-br from-pink-500 to-pink-600',
+                'bg-gradient-to-br from-emerald-500 to-emerald-600',
+                'bg-gradient-to-br from-orange-500 to-orange-600',
+                'bg-gradient-to-br from-cyan-500 to-cyan-600',
+                'bg-gradient-to-br from-indigo-500 to-indigo-600',
+                'bg-gradient-to-br from-rose-500 to-rose-600',
+            ];
+            return gradients[index % gradients.length];
+        }
+        
+        function getChartTypeLabel(type) {
+            const labels = {
+                'bar': '柱状图',
+                'pie': '饼图',
+                'line': '折线图',
+                'histogram': '直方图'
+            };
+            return labels[type] || type;
+        }
+        
+        function getChartIcon(type) {
+            const icons = {
+                'bar': 'bar-chart-3',
+                'pie': 'pie-chart',
+                'line': 'trending-up',
+                'histogram': 'bar-chart'
+            };
+            return icons[type] || 'bar-chart';
+        }
+        
+        function createChart(ctx, type, data, colorIndex = 0) {
+            const colorSets = [
+                { bg: 'rgba(59, 130, 246, 0.7)',   border: 'rgba(59, 130, 246, 1)',   gradient: ['rgba(59, 130, 246, 0.8)', 'rgba(59, 130, 246, 0.1)'] },
+                { bg: 'rgba(168, 85, 247, 0.7)',   border: 'rgba(168, 85, 247, 1)',   gradient: ['rgba(168, 85, 247, 0.8)', 'rgba(168, 85, 247, 0.1)'] },
+                { bg: 'rgba(236, 72, 153, 0.7)',   border: 'rgba(236, 72, 153, 1)',   gradient: ['rgba(236, 72, 153, 0.8)', 'rgba(236, 72, 153, 0.1)'] },
+                { bg: 'rgba(16, 185, 129, 0.7)',   border: 'rgba(16, 185, 129, 1)',   gradient: ['rgba(16, 185, 129, 0.8)', 'rgba(16, 185, 129, 0.1)'] },
+                { bg: 'rgba(249, 115, 22, 0.7)',   border: 'rgba(249, 115, 22, 1)',   gradient: ['rgba(249, 115, 22, 0.8)', 'rgba(249, 115, 22, 0.1)'] },
+                { bg: 'rgba(20, 184, 166, 0.7)',   border: 'rgba(20, 184, 166, 1)',   gradient: ['rgba(20, 184, 166, 0.8)', 'rgba(20, 184, 166, 0.1)'] },
+                { bg: 'rgba(99, 102, 241, 0.7)',   border: 'rgba(99, 102, 241, 1)',   gradient: ['rgba(99, 102, 241, 0.8)', 'rgba(99, 102, 241, 0.1)'] },
+                { bg: 'rgba(244, 63, 94, 0.7)',    border: 'rgba(244, 63, 94, 1)',    gradient: ['rgba(244, 63, 94, 0.8)', 'rgba(244, 63, 94, 0.1)'] },
+            ];
+            
+            const pieColors = colorSets.map(c => c.bg);
+            const pieBorderColors = colorSets.map(c => c.border);
+            const cs = colorSets[colorIndex % colorSets.length];
+            
+            // Create gradient for bar/histogram
+            let bgColor = cs.bg;
+            if (type !== 'pie' && ctx.canvas) {
+                try {
+                    const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+                    gradient.addColorStop(0, cs.gradient[0]);
+                    gradient.addColorStop(1, cs.gradient[1]);
+                    bgColor = gradient;
+                } catch(e) { /* fallback to solid */ }
+            }
+            
+            const chartConfig = {
+                type: type === 'histogram' ? 'bar' : type,
+                data: {
+                    labels: data.labels,
+                    datasets: [{
+                        label: '数量',
+                        data: data.values,
+                        backgroundColor: type === 'pie' ? pieColors : bgColor,
+                        borderColor: type === 'pie' ? pieBorderColors : cs.border,
+                        borderWidth: type === 'pie' ? 2 : 0,
+                        borderRadius: type === 'pie' ? 0 : 6,
+                        hoverBorderWidth: type === 'pie' ? 3 : 2,
+                        hoverBorderColor: cs.border,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: {
+                        duration: 800,
+                        easing: 'easeOutQuart',
+                    },
+                    plugins: {
+                        legend: {
+                            display: type === 'pie',
+                            position: 'right',
+                            labels: {
+                                padding: 12,
+                                usePointStyle: true,
+                                pointStyleWidth: 10,
+                                font: { size: 11 },
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                            titleColor: '#fff',
+                            bodyColor: '#e2e8f0',
+                            borderColor: 'rgba(255,255,255,0.1)',
+                            borderWidth: 1,
+                            cornerRadius: 8,
+                            padding: 12,
+                            callbacks: {
+                                label: function(context) {
+                                    const label = context.label || '';
+                                    const value = context.parsed.y !== undefined ? context.parsed.y : context.parsed;
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const percentage = ((value / total) * 100).toFixed(1);
+                                    return ` ${label}: ${value.toLocaleString()} (${percentage}%)`;
+                                }
+                            }
+                        }
+                    },
+                    scales: type === 'pie' ? {} : {
+                        y: {
+                            beginAtZero: true,
+                            grid: {
+                                color: 'rgba(0,0,0,0.04)',
+                                drawBorder: false,
+                            },
+                            ticks: {
+                                callback: function(value) {
+                                    return value.toLocaleString();
+                                },
+                                font: { size: 11 },
+                                color: '#94a3b8',
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false,
+                            },
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 0,
+                                font: { size: 11 },
+                                color: '#94a3b8',
+                            }
+                        }
+                    }
+                }
+            };
+            
+            return new Chart(ctx, chartConfig);
+        }
+        
+        function formatInsights(insights) {
+            // Convert markdown-like text to HTML
+            return insights
+                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\n\n/g, '</p><p>')
+                .replace(/\n/g, '<br>');
+        }
+        
+        function resetAnalysis() {
+            document.getElementById('step3').classList.add('hidden');
+            selectedTable = null;
+            document.getElementById('selectedTableInfo').classList.add('hidden');
+            document.querySelectorAll('#tablesGrid > div').forEach(el => {
+                el.classList.remove('border-primary-500', 'bg-primary-50');
+                el.classList.add('border-slate-200');
+            });
+            
+            // Clear charts
+            charts.forEach(chart => chart.destroy());
+            charts = [];
+        }
+        
+        // Export dashboard as a standalone HTML report
+        function exportDashboard() {
+            const step3 = document.getElementById('step3');
+            if (!step3) return;
+            
+            // Collect chart data
+            const chartCanvases = step3.querySelectorAll('canvas');
+            const chartImages = [];
+            chartCanvases.forEach(canvas => {
+                try {
+                    chartImages.push(canvas.toDataURL('image/png'));
+                } catch(e) {
+                    chartImages.push(null);
+                }
+            });
+            
+            // Build standalone HTML
+            const title = document.getElementById('statTableName')?.textContent || 'Dashboard';
+            const rowCount = document.getElementById('statRowCount')?.textContent || '-';
+            const colCount = document.getElementById('statColCount')?.textContent || '-';
+            const chartCount = document.getElementById('statChartCount')?.textContent || '-';
+            const insights = document.getElementById('insightsContent')?.innerHTML || '';
+            const colTableHTML = document.querySelector('#columnOverviewBody')?.parentElement?.parentElement?.outerHTML || '';
+            
+            let chartsHTML = '';
+            chartImages.forEach((img, i) => {
+                if (img) {
+                    chartsHTML += `<div style="break-inside:avoid; margin-bottom:24px; background:#fff; border-radius:12px; padding:16px; border:1px solid #e2e8f0;"><img src="${img}" style="width:100%; border-radius:8px;" /></div>`;
+                }
+            });
+            
+            const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title} - 数据分布报告</title>
+<style>body{font-family:Inter,system-ui,sans-serif;background:#f1f5f9;color:#1e293b;margin:0;padding:24px}
+.container{max-width:1200px;margin:0 auto}
+.header{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:32px;border-radius:16px;margin-bottom:24px}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+.kpi{background:#fff;padding:20px;border-radius:12px;border:1px solid #e2e8f0}
+.kpi .label{font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em}
+.kpi .value{font-size:28px;font-weight:700;margin-top:4px}
+.section{background:#fff;padding:24px;border-radius:16px;margin-bottom:24px;border:1px solid #e2e8f0}
+.charts-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #f1f5f9}th{color:#64748b;font-weight:500}
+@media print{body{background:#fff;padding:0}.header{break-after:avoid}}
+</style></head><body>
+<div class="container">
+<div class="header"><h1 style="margin:0;font-size:24px">📊 ${title} - 数据分布分析报告</h1><p style="margin:8px 0 0;opacity:0.8">生成时间: ${new Date().toLocaleString('zh-CN')}</p></div>
+<div class="kpi-grid">
+<div class="kpi"><div class="label">总行数</div><div class="value">${rowCount}</div></div>
+<div class="kpi"><div class="label">字段数</div><div class="value">${colCount}</div></div>
+<div class="kpi"><div class="label">分布图表</div><div class="value">${chartCount}</div></div>
+<div class="kpi"><div class="label">数据表</div><div class="value">${title}</div></div>
+</div>
+<div class="section"><h2 style="margin-top:0">📋 字段概览</h2>${colTableHTML}</div>
+<div class="section"><h2 style="margin-top:0">💡 AI 数据洞察</h2><div>${insights}</div></div>
+<div class="section"><h2 style="margin-top:0">📈 数据分布图表</h2><div class="charts-grid">${chartsHTML}</div></div>
+</div></body></html>`;
+            
+            const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${title}_数据分布报告_${new Date().toISOString().slice(0,10)}.html`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast('报告已导出', 'success');
+        }
+        
+        // Initialize
+        updateFormFields();
+    </script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "items": [
+    "When creating AppShrimp FastAPI sub-apps, generate __init__.py and main.py directly in the current working directory without browsing other app folders.",
+    "Implement personalized chatbots by creating a handle_chat function with FastAPI APIRouter in main.py, tailoring response style to specific user contexts like names or preferences.",
+    "Verify app creation by listing directory contents after writing files to ensure both required files exist with proper byte sizes.",
+    "Keep __init__.py minimal as a Python package marker while placing all application logic including the APIRouter and chat handlers in main.py.",
+    "For compliment or praise bots, generate warm, encouraging responses that reference specific user details to create highly personalized interactions."
+  ],
+  "updated_at": "2026-03-23T10:04:32.128692",
+  "session_count": 1
+}

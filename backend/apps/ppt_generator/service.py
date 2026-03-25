@@ -21,6 +21,7 @@ from .models import Slide, ChatMessage, PPTSession
 from .prompts import (
     PPT_GENERATION_SYSTEM,
     PPT_UPDATE_SYSTEM,
+    DOCUMENT_BASED_GENERATION_PROMPT,
     STYLE_DESCRIPTIONS,
 )
 
@@ -257,4 +258,122 @@ async def update_ppt_session(
     # Store updated session
     _sessions[session_id] = session
 
+    return session
+
+
+async def generate_ppt_from_document(
+    document_content: str,
+    topic: Optional[str] = None,
+    style: str = "professional",
+    language: str = "zh",
+    slide_count: Optional[int] = None,
+) -> PPTSession:
+    """
+    Generate a PPT presentation from document content.
+    
+    Analyzes the document, extracts key information, and creates
+    a structured presentation based on the content.
+    
+    Args:
+        document_content: The text content extracted from the document
+        topic: Optional topic/title for the presentation
+        style: Visual style (professional, creative, minimal, academic)
+        language: Language code (zh, en)
+        slide_count: Optional target number of slides
+    
+    Returns:
+        PPTSession object with generated slides and file path
+    """
+    print(f"[ppt_generator] generate_ppt_from_document | content_len={len(document_content)} | style={style} | lang={language}")
+    
+    session_id = uuid.uuid4().hex[:12]
+    
+    # Generate a topic from the document if not provided
+    if not topic:
+        # Use first 100 chars as fallback topic
+        first_line = document_content.split('\n')[0].strip()
+        topic = first_line[:100] if first_line else "文档演示"
+    
+    # Prepare the prompt for document-based generation
+    user_prompt = DOCUMENT_BASED_GENERATION_PROMPT.format(
+        document_content=document_content[:15000],  # Limit content length for LLM
+        topic=topic,
+        style=style,
+        language="Chinese" if language == "zh" else "English",
+        slide_count=slide_count or "自动确定（建议 5-15 页）",
+    )
+    
+    system_prompt = PPT_GENERATION_SYSTEM.format(language="Chinese" if language == "zh" else "English")
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    
+    # Call LLM
+    response = await chat_completion(messages)
+    print(f"[ppt_generator] LLM response received | response_len={len(response)}")
+    
+    # Parse JSON response
+    slides_data = extract_json_from_text(response)
+    
+    if slides_data and isinstance(slides_data, list) and len(slides_data) > 0:
+        slides = _validate_and_create_slides(slides_data, config.MIN_SLIDE_COUNT)
+        print(f"[ppt_generator] Parsed {len(slides)} slides from LLM response")
+    else:
+        print(f"[ppt_generator] Failed to parse LLM response, using fallback")
+        # Fallback: create structured slides based on document
+        if language == "zh":
+            slides = [
+                Slide(title=topic, content=["基于文档内容生成"], notes="标题页"),
+                Slide(title="内容概述", content=["本文档的主要内容包括...", "关键信息点", "重要数据"], notes="文档概览"),
+                Slide(title="主要发现", content=["关键发现一", "关键发现二", "关键发现三"], notes="核心内容"),
+                Slide(title="详细分析", content=["深入解析文档要点", "相关背景信息", "实际应用价值"], notes="分析内容"),
+                Slide(title="总结", content=["核心观点总结", "建议与行动", "后续展望"], notes="总结页"),
+            ]
+        else:
+            slides = [
+                Slide(title=topic, content=["Generated from document"], notes="Title slide"),
+                Slide(title="Overview", content=["Main content of this document", "Key information points", "Important data"], notes="Document overview"),
+                Slide(title="Key Findings", content=["Key finding one", "Key finding two", "Key finding three"], notes="Core content"),
+                Slide(title="Detailed Analysis", content=["Deep dive into document", "Background information", "Practical applications"], notes="Analysis"),
+                Slide(title="Summary", content=["Key points summary", "Recommendations", "Next steps"], notes="Conclusion"),
+            ]
+    
+    # Limit max slides
+    if slide_count and len(slides) > slide_count:
+        slides = slides[:slide_count]
+    elif len(slides) > config.MAX_SLIDE_COUNT:
+        slides = slides[:config.MAX_SLIDE_COUNT]
+    
+    # Generate PPT file
+    temp_session = PPTSession(
+        session_id=session_id,
+        topic=topic,
+        style=style,
+        language=language,
+        slides=slides,
+        chat_history=[],
+        ppt_file_path=None
+    )
+    filepath = _create_pptx_file(temp_session)
+    
+    # Create final session
+    session = PPTSession(
+        session_id=session_id,
+        topic=topic,
+        style=style,
+        language=language,
+        slides=slides,
+        chat_history=[
+            ChatMessage(role="user", content=f"基于文档生成PPT: {topic}"),
+            ChatMessage(role="assistant", content=f"根据文档生成了 {len(slides)} 页PPT大纲")
+        ],
+        ppt_file_path=str(filepath)
+    )
+    
+    # Store session
+    _sessions[session.session_id] = session
+    print(f"[ppt_generator] Session created | session_id={session_id} | slides={len(slides)}")
+    
     return session

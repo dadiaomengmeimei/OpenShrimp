@@ -51,7 +51,7 @@ async def get_app_info():
         "name": "唐诗生成器",
         "description": "一个智能写唐诗的机器人，可以根据主题、体裁和情感基调创作格律严谨的唐诗",
         "version": "1.0.0",
-        "author": "OpenShrimp",
+        "author": "AppShrimp",
         "supported_styles": ["五言绝句", "七言绝句", "五言律诗", "七言律诗"]
     }
 

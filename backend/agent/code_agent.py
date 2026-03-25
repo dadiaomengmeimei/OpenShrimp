@@ -25,8 +25,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend.core.llm_service import chat_completion
-from backend.config import llm_settings, platform_settings
+from backend.core.llm_service import chat_completion, chat_completion_fast
+from backend.config import llm_settings, fast_llm_settings, platform_settings
 from backend.core import app_registry
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -257,7 +257,7 @@ Files modified: {', '.join(files_modified) if files_modified else '(none)'}
     ]
 
     try:
-        raw = await chat_completion(messages, temperature=0.1, max_tokens=1500)
+        raw = await chat_completion_fast(messages, temperature=0.1, max_tokens=1500)
         raw = _strip_thinking(raw).strip()
         # Remove markdown code fences if present
         if raw.startswith("```"):
@@ -298,7 +298,7 @@ Files modified: {', '.join(files_modified) if files_modified else '(none)'}
 
 def _build_system_prompt(cwd: str, skills_text: str = "") -> str:
     """Build the system prompt for the coding agent."""
-    base = """You are an expert coding agent for the OpenShrimp AI App Store platform.
+    base = """You are an expert coding agent for the AppShrimp AI App Store platform.
 
 You have the following tools available:
 - **ls**: List files and directories
@@ -338,6 +338,20 @@ from backend.core.llm_service import chat_completion
 from backend.core.asr_service import transcribe
 ```
 
+### ⚠️ parse_excel returns rows as list[list], NOT list[dict]!
+
+`parse_excel()` returns `{"headers": ["Name", "Age", ...], "rows": [["Alice", 25, ...], ["Bob", 30, ...]], ...}`.
+Each row is a **plain list** of values (same order as headers), NOT a dict.
+
+If you need dict-style access (`row["Name"]` or `row.get("Name")`), convert first:
+```python
+data = parse_excel(file_path)
+headers = data["headers"]
+rows_as_dicts = [dict(zip(headers, row)) for row in data["rows"]]
+# Now you can do: rows_as_dicts[0]["Name"] or rows_as_dicts[0].get("Name")
+```
+**Common mistake**: writing `row.get(col)` directly on parse_excel rows — this WILL crash at runtime.
+
 ### Shared File Toolkit (IMPORTANT — use this instead of writing file operations from scratch!)
 
 The platform provides a powerful file toolkit at `backend.core.file_toolkit`. **Always use this for file operations** instead of writing PDF/PPT/Excel code from scratch.
@@ -350,13 +364,13 @@ from backend.core.file_toolkit import (
     # PPT
     generate_ppt,        # generate_ppt(slides=[{"title": ..., "content": [...], "notes": ...}], title=..., style=...) -> Path
     # Excel / CSV
-    parse_excel,         # parse_excel(file_path, sheet_name=...) -> {"headers": [...], "rows": [...], "row_count": int}
+    parse_excel,         # parse_excel(file_path, sheet_name=...) -> {"headers": list[str], "rows": list[list] (NOT list[dict]!), "row_count": int, "sheet_names": list[str]}
     generate_excel,      # generate_excel(data=[{"col": val, ...}], sheet_name=..., headers=...) -> Path
     generate_csv,        # generate_csv(data, headers=...) -> Path
     # Word
     parse_docx,          # parse_docx(file_path) -> str (extracted text)
     # Charts / Images
-    generate_chart,      # generate_chart("bar"|"line"|"pie"|"scatter"|"histogram", data, title=...) -> Path
+    generate_chart,      # generate_chart(chart_type, data, title=...) -> Path  (SEE DATA FORMAT BELOW)
     # Download URL management
     register_download,   # register_download(file_path, filename=...) -> token (str)
     get_download_url,    # get_download_url(token) -> "/api/files/download/{token}"
@@ -385,6 +399,28 @@ from backend.core.file_toolkit import (
     make_preview_link,     # make_preview_link(file_path, label=...) -> "[🔍 预览 file.pdf](/api/files/preview/xxx)"
     make_image_embed,      # make_image_embed(file_path, alt_text=...) -> "![chart](/api/files/preview/xxx)" (displays image inline in chat)
 )
+```
+
+### ⚠️ generate_chart / generate_and_register_chart data format (CRITICAL)
+
+`generate_chart` uses **matplotlib** internally. The `data` dict format varies by chart type:
+
+```python
+# bar / line chart:
+data = {"labels": ["A", "B", "C"], "values": [10, 20, 30], "xlabel": "...", "ylabel": "..."}
+
+# pie chart:
+data = {"labels": ["A", "B", "C"], "values": [10, 20, 30]}
+
+# scatter chart:
+data = {"x": [1, 2, 3], "y": [10, 20, 30], "xlabel": "...", "ylabel": "..."}
+
+# histogram:
+data = {"values": [1, 2, 2, 3, 3, 3], "bins": 20, "xlabel": "..."}
+```
+
+**Common mistake**: Using Chart.js format (`{"datasets": [{"data": [...]}]}`) — this will cause `KeyError: 'values'` because generate_chart expects flat `labels`/`values` keys, NOT nested `datasets`.
+```
 ```
 
 ### ⚠️ File Download Rules (CRITICAL — read carefully!)
@@ -473,6 +509,14 @@ The router pattern in `main.py` MUST follow:
 from fastapi import APIRouter
 router = APIRouter(prefix="/api/apps/<app_id>", tags=["<app_name>"])
 ```
+
+### Router Registration (IMPORTANT for apps with custom endpoints)
+
+For **simple chat-only apps** (only `handle_chat`, no custom API endpoints), the platform's generic router handles everything automatically — no extra registration needed.
+
+For **apps with custom endpoints** (e.g. `/upload`, `/analyze`, `/charts`), the app's router is **automatically discovered and registered** by the platform at startup. You do NOT need to manually edit the main `main.py` — just define your router in your app's `main.py` and the platform will pick it up.
+
+However, be aware that if the platform's generic router has a similar route (e.g. `/api/apps/{app_id}/upload`), your app's specific route will take priority ONLY if it's registered. If there are issues, the platform admin may need to add your router to the main app.
 
 ## `handle_chat` Protocol (CRITICAL)
 
@@ -565,6 +609,76 @@ async def handle_chat(messages, *, config=None):
             # Read and process the file...
     
     return {"content": "Processing complete!"}
+```
+
+## ⚠️ Common Pitfalls (MUST READ — avoids first-run failures!)
+
+### 1. Input sanitization
+**Always `.strip()` user text input** before using it (e.g. IP addresses, hostnames, URLs, IDs).
+Trailing spaces cause DNS resolution failures, DB connection errors, and other hard-to-debug issues.
+```python
+host = user_input.get("host", "").strip()
+```
+
+### 2. Error response format
+The platform's frontend expects error messages in `message` or `detail` fields.
+When raising `HTTPException`, the response is `{"detail": "...", "message": "..."}`.
+When returning error dicts from your own endpoints, **always include a `message` field**:
+```python
+# ✅ Good: frontend can always find the error text
+return JSONResponse(status_code=400, content={"success": False, "message": "Connection failed: invalid host"})
+# ✅ Good: HTTPException is auto-normalized by the platform
+raise HTTPException(400, "Connection failed: invalid host")
+# ❌ Bad: frontend cannot extract the error message
+return {"success": False, "error": "something went wrong"}  # No 'message' field!
+```
+
+### 5. Upload endpoint response format (for web mode apps)
+If your app has a file upload endpoint, the response MUST follow this format:
+```python
+# ✅ Correct upload response format:
+return {
+    "success": True,
+    "file_path": str(saved_file_path),
+    "data": {
+        "file_name": original_filename,
+        "row_count": number_of_rows,
+        "column_count": number_of_columns,
+        "headers": ["col1", "col2", ...],
+        "sample_data": [{"col1": "val1", ...}, ...],  # list[dict], NOT list[list]!
+    }
+}
+# ✅ Correct upload error response:
+return JSONResponse(status_code=400, content={"success": False, "message": "File parsing failed: ..." })
+```
+**CRITICAL**: The `sample_data` field must be `list[dict]` (not `list[list]`), because the frontend accesses values by column name (`row[headerName]`). If you use `parse_excel`, convert rows to dicts first.
+**NEVER** hardcode a failure response as a placeholder — always implement the actual file parsing logic.
+
+### 6. parse_excel rows format
+Remember: `parse_excel()` returns rows as `list[list]` (arrays), NOT `list[dict]`.
+If you need dict-style access, always convert:
+```python
+data = parse_excel(file_path)
+headers = data["headers"]
+rows_as_dicts = [dict(zip(headers, row)) for row in data["rows"]]
+```
+Failing to convert will cause `AttributeError: 'list' object has no attribute 'get'` at runtime.
+
+### 3. Dependencies for web mode apps
+For web mode apps that use `fetch()` in the HTML frontend:
+- Always include **error handling** in fetch calls and show user-friendly error messages
+- Always attach the auth token: `headers: { 'Authorization': 'Bearer ' + localStorage.getItem('auth_token') }`
+- Always `.trim()` form inputs before sending to the API
+
+### 4. Third-party package imports
+If your app uses packages beyond the platform defaults, make sure to:
+- Add them to `requirements.txt`
+- Use try/except on imports to give clear error messages instead of silent failures:
+```python
+try:
+    import aiomysql
+except ImportError:
+    raise ImportError("This app requires 'aiomysql'. Add it to requirements.txt.")
 ```
 
 ## Dependency management
@@ -953,8 +1067,30 @@ def _parse_tool_calls(text: str) -> list[dict]:
 
 
 def _strip_thinking(text: str) -> str:
-    """Remove <think>...</think> blocks from the response."""
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    """Remove <think>...</think> blocks and Qwen3 'Thinking Process:' blocks from the response."""
+    # Case 1: Standard <think>...</think> tags
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    # Case 2: Content before </think> without opening <think> tag
+    if "</think>" in text:
+        text = text.split("</think>")[-1].strip()
+    # Case 3: "Thinking Process:" prefix without any tags
+    if text.startswith("Thinking Process:") or text.startswith("**Thinking Process"):
+        lines = text.rstrip().split('\n')
+        result_lines = []
+        for line in reversed(lines):
+            stripped = line.strip()
+            if not stripped:
+                if result_lines:
+                    break
+                continue
+            if stripped.startswith(('*', '-', '#', 'Thinking', '**Thinking')):
+                break
+            if re.match(r'^\d+\.\s', stripped):
+                break
+            result_lines.insert(0, stripped)
+        if result_lines:
+            text = '\n'.join(result_lines)
+    return text.strip()
 
 
 def _strip_tool_calls(text: str) -> str:
@@ -1021,7 +1157,7 @@ async def _check_capability_scope(description: str) -> dict:
         {"role": "user", "content": f"User request: {description}"},
     ]
     try:
-        raw = await chat_completion(messages, temperature=0.1, max_tokens=300)
+        raw = await chat_completion_fast(messages, temperature=0.1, max_tokens=300)
         raw = _strip_thinking(raw).strip()
         if raw.startswith("```"):
             raw = "\n".join(raw.split("\n")[1:])
@@ -1141,6 +1277,7 @@ class GenerateRequest(BaseModel):
     description: str
     app_id: Optional[str] = None  # None = create new app; set = modify existing
     base_app_id: Optional[str] = None  # optional: clone from an existing app
+    mode: str = "chat"  # "chat" (in-platform chat UI) or "web" (standalone web page)
 
 
 # ─────────────────────────────────────────────────
@@ -1169,13 +1306,16 @@ async def generate_app(req: GenerateRequest):
         try:
             # Determine working directory
             inferred_app_id = None
+            scope_result = None
             if req.app_id:
                 target_dir = (APPS_DIR / req.app_id).resolve()
                 target_dir.mkdir(parents=True, exist_ok=True)
             else:
-                # Pre-infer app_id so we can restrict cwd to the new app's own directory,
-                # preventing the agent from browsing and being contaminated by other apps.
-                inferred_app_id = await _infer_app_id(req.description)
+                # Parallelize: run _infer_app_id and _check_capability_scope concurrently
+                # to save ~2-5 seconds on each new app creation
+                infer_task = asyncio.create_task(_infer_app_id(req.description))
+                scope_task = asyncio.create_task(_check_capability_scope(req.description))
+                inferred_app_id, scope_result = await asyncio.gather(infer_task, scope_task)
                 target_dir = (APPS_DIR / inferred_app_id).resolve()
                 target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1184,13 +1324,11 @@ async def generate_app(req: GenerateRequest):
 
             yield _sse({"type": "start", "method": "agentic-loop", "app_id": req.app_id, "session_id": session_id})
             yield _sse({"type": "log", "message": f"Working directory: {cwd}"})
-            yield _sse({"type": "log", "message": f"Model: {llm_settings.model}"})
+            yield _sse({"type": "log", "message": f"Model: {llm_settings.model} (fast: {fast_llm_settings.model})"})
             yield _sse({"type": "log", "message": f"Max iterations: {MAX_ITERATIONS} (with auto context compression)"})
 
-            # Capability scope check (only for new apps, not modifications)
-            if not req.app_id:
-                yield _sse({"type": "log", "message": "🔍 Checking capability scope..."})
-                scope_result = await _check_capability_scope(req.description)
+            # Capability scope check result (already computed in parallel for new apps)
+            if not req.app_id and scope_result is not None:
                 if not scope_result.get("feasible", True):
                     reason = scope_result.get("reason", "Request exceeds platform capabilities")
                     suggestion = scope_result.get("suggestion", "")
@@ -1200,7 +1338,7 @@ async def generate_app(req: GenerateRequest):
                     yield _sse({"type": "scope_warning", "message": msg, "reason": reason, "suggestion": suggestion})
                     yield _sse({"type": "done", "output": msg, "files_modified": [], "app_id": None})
                     return
-                yield _sse({"type": "log", "message": "✅ Request is within platform capabilities"})
+                yield _sse({"type": "log", "message": "✅ Request is within platform capabilities (checked in parallel)"})
 
             # Build the prompt
             if req.app_id:
@@ -1222,6 +1360,10 @@ async def generate_app(req: GenerateRequest):
                     f"Build everything from scratch based on the requirements.\n"
                     f"Requirements: {req.description}"
                 )
+
+            # For web mode, append web-specific instructions to user prompt
+            if req.mode == "web":
+                user_prompt += _get_web_mode_instructions(inferred_app_id or req.app_id or "app")
 
             # Load existing skills for the app (if editing)
             skills_text = ""
@@ -1262,7 +1404,7 @@ async def generate_app(req: GenerateRequest):
             print(f"[agent] Agentic loop finished | files_modified={files_modified} | output_len={len(full_output)}")
             new_app_id = req.app_id
             if not new_app_id:
-                new_app_id = await _discover_and_register_app(req.description, cwd, inferred_app_id)
+                new_app_id = await _discover_and_register_app(req.description, cwd, inferred_app_id, mode=req.mode)
                 print(f"[agent] Discovered app_id: {new_app_id}")
             else:
                 print(f"[agent] Using existing app_id: {new_app_id}")
@@ -1331,20 +1473,7 @@ async def generate_app(req: GenerateRequest):
                     _tb.print_exc()
                     yield _sse({"type": "log", "message": f"⚠️ Module reload failed: {e}. App may need a server restart."})
 
-            # Extract and save skills
-            skill_app_id = new_app_id or effective_app_id
-            if skill_app_id and len(messages) > 2:
-                yield _sse({"type": "log", "message": "Extracting skills from session..."})
-                try:
-                    updated_skills = await _extract_and_merge_skills(
-                        skill_app_id, req.description, messages, files_modified,
-                    )
-                    skill_count = len(updated_skills.get("items", []))
-                    yield _sse({"type": "log", "message": f"Saved {skill_count} skills for app '{skill_app_id}'"})
-                    yield _sse({"type": "skills_updated", "app_id": skill_app_id, "count": skill_count, "items": updated_skills.get("items", [])})
-                except Exception as e:
-                    yield _sse({"type": "log", "message": f"Warning: skill extraction failed: {e}"})
-
+            # Send done event FIRST so user can start using the app immediately
             print(f"[agent] ✅ Agent session complete | app_id={new_app_id} | files_modified={files_modified} | output_len={len(full_output)}")
             yield _sse({
                 "type": "done",
@@ -1352,6 +1481,21 @@ async def generate_app(req: GenerateRequest):
                 "files_modified": files_modified,
                 "app_id": new_app_id,
             })
+
+            # Extract and save skills in background (non-blocking, after done)
+            skill_app_id = new_app_id or effective_app_id
+            if skill_app_id and len(messages) > 2:
+                # Fire-and-forget: extract skills asynchronously without blocking the SSE stream
+                async def _bg_extract_skills():
+                    try:
+                        updated_skills = await _extract_and_merge_skills(
+                            skill_app_id, req.description, list(messages), list(files_modified),
+                        )
+                        skill_count = len(updated_skills.get("items", []))
+                        print(f"[agent] Background skill extraction done: {skill_count} skills for '{skill_app_id}'")
+                    except Exception as e:
+                        print(f"[agent] Background skill extraction failed: {e}")
+                asyncio.create_task(_bg_extract_skills())
         except Exception as _gen_err:
             print(f"[agent] ❌ CRITICAL ERROR in event_stream: {_gen_err}")
             import traceback as _tb
@@ -1372,7 +1516,90 @@ async def generate_app(req: GenerateRequest):
     )
 
 
-async def _discover_and_register_app(description: str, cwd: str, inferred_app_id: Optional[str] = None) -> Optional[str]:
+def _get_web_mode_instructions(app_id: str) -> str:
+    """Return additional instructions for web mode apps."""
+    return f"""
+
+## ⚠️ WEB MODE — STANDALONE WEB APPLICATION
+
+This app should be a **standalone web application** that runs in its own browser tab, NOT a chat-based app.
+
+### Architecture for Web Mode
+
+You must create:
+1. **`main.py`** — FastAPI backend with:
+   - A router with prefix `/api/apps/{app_id}` (as usual)
+   - API endpoints for the app's functionality
+   - A `handle_chat` function (required by platform, can be a simple stub that returns a help message)
+   - **IMPORTANT**: A route to serve the main HTML page:
+     ```python
+     from fastapi.responses import HTMLResponse
+     
+     @router.get("/web", response_class=HTMLResponse)
+     async def web_ui():
+         html_path = Path(__file__).parent / "static" / "index.html"
+         return HTMLResponse(html_path.read_text(encoding="utf-8"))
+     ```
+
+2. **`static/index.html`** — The main web page, a complete self-contained HTML file with:
+   - Inline CSS (use modern, beautiful design with gradients, shadows, etc.)
+   - Inline JavaScript
+   - All API calls should use relative paths: `fetch('/api/apps/{app_id}/...')`
+   - Responsive design that works on desktop and mobile
+   - Professional, polished UI (not a toy/demo look)
+
+3. **`static/`** — Directory for any additional static assets (JS, CSS, images)
+
+### Key Design Principles for Web Mode:
+- The HTML page should be **self-contained** — use inline styles/scripts or CDN links (e.g., Tailwind CSS via CDN, Chart.js via CDN)
+- Use modern UI patterns: cards, modals, toasts, loading states, transitions
+- Include proper error handling and loading indicators
+- For charts/visualizations, use Chart.js, ECharts, or similar via CDN
+- For file uploads, use `fetch('/api/apps/{app_id}/upload', {{ method: 'POST', body: formData }})`
+- The app should feel like a real product, not a homework assignment
+- Add the auth token to API requests: `headers: {{ 'Authorization': 'Bearer ' + localStorage.getItem('auth_token') }}`
+
+### ⚠️ Web Mode Error Handling (CRITICAL):
+All fetch calls MUST handle errors properly. The backend may return errors in different formats.
+Always use this pattern:
+```javascript
+async function apiCall(url, options) {{
+  const token = localStorage.getItem('auth_token');
+  const res = await fetch(url, {{
+    ...options,
+    headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token, ...(options?.headers || {{}}) }}
+  }});
+  if (!res.ok) {{
+    const data = await res.json().catch(() => ({{}}));
+    // Handle both FastAPI {detail: "..."} and custom {message: "..."} formats
+    const errMsg = data.message || (typeof data.detail === 'string' ? data.detail : data.detail?.message) || `HTTP ${{res.status}}`;
+    throw new Error(errMsg);
+  }}
+  return res.json();
+}}
+```
+Always show errors to users via toast/alert — NEVER swallow errors silently.
+Always `.trim()` form inputs before sending to the API.
+
+### Static File Serving:
+The platform will serve static files from your app's `static/` directory at:
+`/api/apps/{app_id}/static/{{filename}}`
+
+So in your HTML, reference static assets like:
+```html
+<link rel="stylesheet" href="/api/apps/{app_id}/static/style.css">
+<script src="/api/apps/{app_id}/static/app.js"></script>
+```
+
+### handle_chat stub (required):
+```python
+async def handle_chat(messages: list[dict], *, config: dict | None = None) -> str:
+    return "This is a web application. Please open it in a new browser tab to use the full interface."
+```
+"""
+
+
+async def _discover_and_register_app(description: str, cwd: str, inferred_app_id: Optional[str] = None, mode: str = "chat") -> Optional[str]:
     """Discover newly created app directories and register them."""
     # If we pre-inferred an app_id, check that directory first
     if inferred_app_id:
@@ -1381,12 +1608,14 @@ async def _discover_and_register_app(description: str, cwd: str, inferred_app_id
             existing = await app_registry.get_app(inferred_app_id)
             if not existing:
                 metadata = await _extract_metadata(description, inferred_app_id)
+                config = {"mode": mode} if mode != "chat" else {}
                 await app_registry.register_app(
                     inferred_app_id,
                     name=metadata.get("name", inferred_app_id),
                     description=metadata.get("description", description),
                     icon=metadata.get("icon", "🤖"),
                     category=metadata.get("category", "general"),
+                    config=config,
                 )
                 return inferred_app_id
 
@@ -1399,12 +1628,14 @@ async def _discover_and_register_app(description: str, cwd: str, inferred_app_id
                 existing = await app_registry.get_app(app_id)
                 if not existing:
                     metadata = await _extract_metadata(description, app_id)
+                    config = {"mode": mode} if mode != "chat" else {}
                     await app_registry.register_app(
                         app_id,
                         name=metadata.get("name", app_id),
                         description=metadata.get("description", description),
                         icon=metadata.get("icon", "🤖"),
                         category=metadata.get("category", "general"),
+                        config=config,
                     )
                     return app_id
     return None
@@ -1416,49 +1647,79 @@ async def _infer_app_id(description: str) -> str:
         {
             "role": "system",
             "content": (
-                "You are a naming assistant. Your ONLY job is to generate a short, descriptive snake_case "
-                "identifier (like a Python package name) that summarizes the PURPOSE of the app.\n\n"
+                "You are a naming assistant. Generate a short, descriptive snake_case identifier for the app described below.\n\n"
                 "Rules:\n"
-                "- 2-4 English words joined by underscores, e.g. 'todo_list', 'ppt_generator', 'weather_bot'\n"
+                "- 2-4 English words joined by underscores\n"
+                "- The name MUST directly reflect the app's CORE FUNCTION or THEME\n"
                 "- Lowercase letters, digits, and underscores ONLY\n"
                 "- 3-30 characters total\n"
-                "- Must describe WHAT the app does, NOT what the user said\n"
-                "- Do NOT include words like 'app', 'user', 'want', 'create', 'make', 'build', 'please'\n"
-                "- Do NOT repeat or paraphrase the user's sentence\n\n"
+                "- Focus on the DOMAIN and ACTION: what does the app DO? what is its THEME?\n"
+                "- Do NOT include generic words: 'app', 'tool', 'bot', 'helper', 'assistant', 'user', 'want', 'create', 'make', 'build'\n\n"
                 "Examples:\n"
-                "  User: '帮我做一个生成PPT的工具' → ppt_generator\n"
-                "  User: 'I want to build a todo list app' → todo_list\n"
-                "  User: '做一个能分析CSV数据的应用' → csv_analyzer\n"
-                "  User: '写一个天气查询机器人' → weather_query\n"
-                "  User: '帮我写一个记账本' → expense_tracker\n"
-                "  User: '做个图片压缩工具' → image_compressor\n\n"
-                "Output ONLY the identifier, nothing else. No quotes, no backticks, no explanation."
+                "  '帮我做一个生成PPT的工具' → ppt_generator\n"
+                "  '做一个能分析CSV数据的应用' → csv_analyzer\n"
+                "  '写一个天气查询机器人' → weather_query\n"
+                "  '帮我写一个记账本' → expense_tracker\n"
+                "  '做个图片压缩工具' → image_compressor\n"
+                "  '做一个夸夸机器人，来什么夸什么' → praise_generator\n"
+                "  '做一个翻译工具' → text_translator\n"
+                "  '写一个代码review工具' → code_reviewer\n"
+                "  '做一个诗词生成器' → poem_writer\n"
+                "  '帮我做一个日报生成器' → daily_report\n\n"
+                "Output ONLY the snake_case identifier. No quotes, no backticks, no explanation, no thinking."
             ),
         },
         {"role": "user", "content": description},
     ]
     import re
     try:
-        raw = await chat_completion(messages, temperature=0.1, max_tokens=50)
+        raw = await chat_completion_fast(messages, temperature=0.1, max_tokens=500)
         raw = _strip_thinking(raw).strip().strip('"').strip("'").strip('`').strip()
+        # If the LLM returned multi-line, take only the last non-empty line
+        # (thinking content usually comes first, the answer is at the end)
+        lines = [ln.strip() for ln in raw.split('\n') if ln.strip()]
+        if lines:
+            raw = lines[-1].strip().strip('"').strip("'").strip('`').strip()
         # Sanitize: only allow valid Python identifier chars
         sanitized = re.sub(r'[^a-z0-9_]', '_', raw.lower())
         # Collapse multiple underscores and strip leading/trailing
         sanitized = re.sub(r'_+', '_', sanitized).strip('_')
         # Reject if it still looks like a sentence or contains noise words
         noise_words = {'the', 'user', 'wants', 'want', 'me', 'to', 'generate', 'create',
-                       'make', 'build', 'please', 'help', 'app', 'application', 'a', 'an'}
+                       'make', 'build', 'please', 'help', 'app', 'application', 'a', 'an',
+                       'that', 'this', 'for', 'with', 'from', 'it', 'is', 'are', 'was',
+                       'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did',
+                       'will', 'would', 'could', 'should', 'may', 'might', 'can',
+                       'thinking', 'process', 'analyze', 'step', 'first', 'need',
+                       'snake', 'case', 'identifier', 'name', 'output', 'result',
+                       'of', 'in', 'on', 'at', 'by', 'so', 'if', 'or', 'and', 'not',
+                       'uploaded', 'takes', 'reads', 'excel', 'file', 'files',
+                       'bot', 'helper', 'assistant', 'tool', 'system', 'program',
+                       'write', 'new', 'one', 'get', 'set', 'let', 'just', 'like',
+                       'here', 'based', 'simple', 'basic', 'given', 'input',
+                       'forbidden', 'root', 'candidate', 'maker', 'directory',
+                       'structure', 'current', 'check', 'existing', 'before',
+                       'after', 'start', 'starting', 'fresh', 'assess', 'list',
+                       'examine', 'intent', 'progress', 'observation', 'decision',
+                       'response', 'request', 'function', 'called', 'also',
+                       'good', 'use', 'using', 'used', 'about', 'what', 'which',
+                       'how', 'when', 'where', 'who', 'why', 'then', 'next',
+                       'only', 'all', 'each', 'every', 'any', 'some', 'many',
+                       'now', 'well', 'very', 'much', 'more', 'most', 'such'}
         parts = sanitized.split('_')
-        cleaned_parts = [p for p in parts if p and p not in noise_words]
+        cleaned_parts = [p for p in parts if p and p not in noise_words and len(p) > 1]
         if cleaned_parts:
             sanitized = '_'.join(cleaned_parts)[:30]
-        if sanitized and len(sanitized) >= 3:
-            # Check for directory collision, append suffix if needed
+        # Reject results that are too long (likely a sentence, not an identifier)
+        if sanitized and len(sanitized) >= 3 and len(sanitized.split('_')) <= 5:
+            # Check for directory collision OR database collision, append suffix if needed
             candidate = APPS_DIR / sanitized
-            if candidate.exists():
+            db_exists = await app_registry.get_app(sanitized)
+            if candidate.exists() or db_exists:
                 for i in range(2, 100):
                     alt = f"{sanitized[:26]}_{i}"
-                    if not (APPS_DIR / alt).exists():
+                    alt_db = await app_registry.get_app(alt)
+                    if not (APPS_DIR / alt).exists() and not alt_db:
                         return alt
             return sanitized
     except Exception:
@@ -1487,7 +1748,7 @@ async def _extract_metadata(description: str, app_id: str) -> dict:
         {"role": "user", "content": f"App ID: {app_id}\nApp description: {description}"},
     ]
     try:
-        raw = await chat_completion(messages, temperature=0.1, max_tokens=500)
+        raw = await chat_completion_fast(messages, temperature=0.1, max_tokens=2000)
         raw = _strip_thinking(raw).strip()
         if raw.startswith("```"):
             raw = "\n".join(raw.split("\n")[1:])
@@ -1667,7 +1928,7 @@ Format as a structured summary, ~300 words max. Be factual and precise.
 
     try:
         summary = await asyncio.wait_for(
-            chat_completion(
+            chat_completion_fast(
                 [
                     {"role": "system", "content": "You are a conversation summarizer. Output a concise structured summary."},
                     {"role": "user", "content": compress_prompt},
@@ -1769,6 +2030,58 @@ def _self_verify(app_id: str, cwd: str) -> dict:
         "detail": detail,
     })
 
+    # Check 5: Static analysis — detect parse_excel + row.get() misuse
+    # parse_excel returns rows as list[list], but code often mistakenly uses row.get() (dict method)
+    for pf in py_files:
+        try:
+            code = pf.read_text(encoding="utf-8", errors="replace")
+            uses_parse_excel = "parse_excel" in code
+            uses_row_get = "row.get(" in code or "row[col]" in code or "row[header" in code
+            has_dict_zip = "dict(zip(" in code or "zip(headers" in code or "_rows_to_dicts" in code
+            if uses_parse_excel and uses_row_get and not has_dict_zip:
+                checks.append({
+                    "name": f"parse_excel usage: {pf.name}",
+                    "passed": False,
+                    "detail": (
+                        "Code uses parse_excel() and accesses rows as dicts (row.get()/row[col]), "
+                        "but parse_excel returns rows as list[list], NOT list[dict]. "
+                        "Add conversion: rows_as_dicts = [dict(zip(headers, row)) for row in data['rows']]"
+                    ),
+                })
+        except Exception:
+            pass
+
+    # Check 6: Static analysis — detect hardcoded failure responses (placeholder stubs)
+    for pf in py_files:
+        try:
+            code = pf.read_text(encoding="utf-8", errors="replace")
+            # Detect patterns like: always return failure, hardcoded error
+            hardcoded_fail_patterns = [
+                "always return",
+                "# Always return upload failed",
+                "# always returns upload failed",
+                "# hardcoded",
+                "# TODO: implement",
+                "# FIXME: implement",
+            ]
+            for pattern in hardcoded_fail_patterns:
+                if pattern.lower() in code.lower():
+                    # Check if it's near a return statement with error/failure
+                    lines = code.split("\n")
+                    for i, line in enumerate(lines):
+                        if pattern.lower() in line.lower():
+                            # Look at surrounding lines for return with failure
+                            context = "\n".join(lines[max(0,i-2):min(len(lines),i+3)])
+                            if any(kw in context.lower() for kw in ["success.*false", "status_code=400", "upload fail", "上传失败"]):
+                                checks.append({
+                                    "name": f"hardcoded failure: {pf.name}",
+                                    "passed": False,
+                                    "detail": f"Line {i+1}: Found hardcoded failure response ('{pattern}'). Implement actual logic instead of placeholder stubs.",
+                                })
+                                break
+        except Exception:
+            pass
+
     all_ok = all(c["passed"] for c in checks)
     return {"ok": all_ok, "checks": checks}
 
@@ -1844,11 +2157,29 @@ async def _run_agentic_loop(
         if text_content:
             full_output += text_content + "\n"
             yield _sse({"type": "text_delta", "delta": text_content})
+            # Log the raw reply for debugging (truncated)
+            print(f"[agent] LLM text reply #{iteration} ({len(text_content)} chars): {text_content[:200]}")
 
         # Extract tool calls from the OpenAI-standard message object
         api_tool_calls = raw_message.tool_calls or []
 
         if not api_tool_calls:
+            # If no files have been modified yet and we're in the early iterations,
+            # the LLM may have just "thought" without acting. Remind it to use tools.
+            if not files_modified and iteration <= 3:
+                print(f"[agent] No tool_calls in iteration {iteration} and no files modified yet — nudging LLM to use tools")
+                yield _sse({"type": "log", "message": f"⚠️ No tool calls received (iter {iteration}), reminding agent to use tools..."})
+                # Add the LLM's text reply as assistant message
+                messages.append({"role": "assistant", "content": text_content or "(no content)"})
+                # Add a nudge to actually use tools
+                nudge = (
+                    "You didn't use any tools in your last response. "
+                    "You MUST use tools (ls, write, read, bash, edit) to create files. "
+                    "Start by using the `ls` tool to check the current directory, then use `write` to create the necessary files. "
+                    "Do NOT just describe what you would do — actually call the tools to do it."
+                )
+                messages.append({"role": "user", "content": nudge})
+                continue  # Retry the loop instead of breaking
             yield _sse({"type": "log", "message": "Agent finished (no more tool calls)"})
             break
 
@@ -1938,6 +2269,20 @@ async def _run_agentic_loop(
                 "content": tr["result"],
             })
 
+        # Detect "stuck in ls loop" pattern: if LLM only calls read-only tools (ls, read)
+        # repeatedly without creating any files, nudge it to actually write code.
+        if not files_modified:
+            tool_names_this_iter = [tc.function.name for tc in api_tool_calls]
+            read_only_tools = {"ls", "read"}
+            if all(tn in read_only_tools for tn in tool_names_this_iter) and iteration >= 2:
+                print(f"[agent] Detected read-only tool loop (iter {iteration}), nudging to write files")
+                write_nudge = (
+                    "You've examined the directory enough. Now you MUST create files. "
+                    "Call the `write` tool to create `main.py` with the complete app code. "
+                    "The `write` tool takes `file_path` and `content` parameters."
+                )
+                messages.append({"role": "user", "content": write_nudge})
+
         # Inject execution trace summary every few iterations so agent can self-reflect
         if iteration % 3 == 0 or iteration == 1:
             trace_summary = _format_execution_trace(execution_trace)
@@ -2018,14 +2363,23 @@ def _build_error_fix_prompt(req: AutoFixRequest) -> str:
     parts.append("")
     parts.append("## Your Task")
     parts.append("")
-    parts.append("1. Read all source files of this app to understand the current code")
-    parts.append("2. Analyze the error: identify the root cause from the traceback and error message")
-    parts.append("3. Fix the bug by rewriting the affected file(s)")
-    parts.append("4. Verify the fix makes sense (check imports, types, logic)")
-    parts.append("5. Provide a brief summary of what was wrong and how you fixed it")
+    parts.append("1. Run `ls` to see ALL files, including static/ directory and subdirectories")
+    parts.append("2. Read ALL source files (.py, .html, .js) to understand the complete codebase")
+    parts.append("   - ALWAYS read the static/index.html if it exists — frontend bugs (wrong API paths, wrong response field names) are a VERY common root cause")
+    parts.append("   - Check if the frontend expects fields like 'nine_grid' but backend returns 'analysis', etc.")
+    parts.append("3. Analyze the error: identify the root cause from the traceback and error message")
+    parts.append("4. Check the function signatures of any shared toolkit functions being called")
+    parts.append("   - If the error is 'KeyError', the data format passed to a toolkit function may be wrong")
+    parts.append("   - Read the toolkit source or docstrings to verify the expected data format")
+    parts.append("5. Fix the bug by rewriting the affected file(s)")
+    parts.append("6. Verify the fix makes sense (check imports, types, logic)")
+    parts.append("7. Provide a brief summary of what was wrong and how you fixed it")
     parts.append("")
     parts.append("IMPORTANT:")
-    parts.append("- Start by reading the existing files with `read` and `ls`")
+    parts.append("- Start by running `ls -R` to discover ALL files, then `read` EVERY file")
+    parts.append("- For web-mode apps, ALWAYS read static/index.html — mismatches between frontend and backend are the #1 cause of bugs")
+    parts.append("- When calling shared toolkit functions (generate_chart, parse_excel, etc.), verify you're using the correct data format by reading the function's docstring")
+    parts.append("- If the error is about response format (e.g. frontend shows 'undefined'), compare what the backend returns vs what the frontend expects")
     parts.append("- Make minimal, targeted changes — don't rewrite everything unless necessary")
     parts.append("- Ensure all imports are correct")
     parts.append("- Test your fix mentally: will the same input still cause an error?")
@@ -2082,11 +2436,13 @@ def _build_behavior_fix_prompt(req: AutoFixRequest) -> str:
 
     parts.append("## Your Task")
     parts.append("")
-    parts.append("1. Read all source files of this app to understand the current code and logic")
+    parts.append("1. Run `ls -R` to discover ALL files, then read ALL source files (.py, .html, .js)")
+    parts.append("   - ALWAYS read static/index.html if it exists — frontend-backend mismatches are a top cause of behavior issues")
     parts.append("2. Analyze the conversation history, actual output, and expected behavior")
-    parts.append("3. Identify WHY the output doesn't match expectations (logic bug, missing feature, wrong prompt, etc.)")
-    parts.append("4. Fix the code so the app would produce output matching the user's expectations")
-    parts.append("5. Think about edge cases: will similar inputs also be handled correctly?")
+    parts.append("3. Identify WHY the output doesn't match expectations (logic bug, missing feature, wrong prompt, wrong response format, API path mismatch, etc.)")
+    parts.append("4. Check if the frontend expects specific response field names that the backend doesn't provide")
+    parts.append("5. Fix the code so the app would produce output matching the user's expectations")
+    parts.append("6. Think about edge cases: will similar inputs also be handled correctly?")
     parts.append("6. Provide a brief summary of what was wrong and how you fixed it")
     parts.append("")
     parts.append("IMPORTANT:")
@@ -2226,28 +2582,29 @@ async def auto_fix_app(req: AutoFixRequest):
                 except Exception as e:
                     yield _sse({"type": "log", "message": f"Warning: module reload failed: {e}"})
 
-            # Extract skills from the debugging session
-            if len(messages) > 2:
-                yield _sse({"type": "log", "message": "Extracting debugging insights..."})
-                try:
-                    updated_skills = await _extract_and_merge_skills(
-                        req.app_id,
-                        f"Auto-fix: {req.error_message}",
-                        messages,
-                        files_modified,
-                    )
-                    skill_count = len(updated_skills.get("items", []))
-                    yield _sse({"type": "log", "message": f"Saved {skill_count} skills (including fix insights)"})
-                    yield _sse({"type": "skills_updated", "app_id": req.app_id, "count": skill_count, "items": updated_skills.get("items", [])})
-                except Exception as e:
-                    yield _sse({"type": "log", "message": f"Warning: skill extraction failed: {e}"})
-
+            # Send done event FIRST so user gets immediate feedback
             yield _sse({
                 "type": "done",
                 "output": full_output[:3000],
                 "files_modified": files_modified,
                 "app_id": req.app_id,
             })
+
+            # Extract skills from the debugging session in background (non-blocking)
+            if len(messages) > 2:
+                async def _bg_extract_fix_skills():
+                    try:
+                        updated_skills = await _extract_and_merge_skills(
+                            req.app_id,
+                            f"Auto-fix: {req.error_message}",
+                            list(messages),
+                            list(files_modified),
+                        )
+                        skill_count = len(updated_skills.get("items", []))
+                        print(f"[agent] Background fix skill extraction done: {skill_count} skills for '{req.app_id}'")
+                    except Exception as e:
+                        print(f"[agent] Background fix skill extraction failed: {e}")
+                asyncio.create_task(_bg_extract_fix_skills())
         finally:
             _destroy_session(session_id)
 

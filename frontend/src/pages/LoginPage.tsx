@@ -42,7 +42,7 @@ export default function LoginPage() {
           <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-orange-500 to-rose-600 flex items-center justify-center text-3xl mx-auto mb-4 shadow-lg shadow-orange-500/25">
             🦐
           </div>
-          <h1 className="text-2xl font-bold text-white">OpenShrimp</h1>
+          <h1 className="text-2xl font-bold text-white">AppShrimp</h1>
           <p className="text-sm text-slate-400 mt-1">Open-source AI App Store</p>
         </div>
 

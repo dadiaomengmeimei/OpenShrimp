@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Send, Loader2, Wrench, Terminal, CheckCircle, AlertCircle, FileCode, ChevronDown, ChevronUp, RotateCcw, StopCircle, MessageSquare, ThumbsDown, Download, Paperclip, X, FileUp } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
-import api, { autoFixAppStream, AgentEvent, interruptAgent, injectAgentMessage, uploadFileForApp, GenericUploadResult } from '../services/api'
+import api, { autoFixAppStream, AgentEvent, interruptAgent, injectAgentMessage, uploadFileForApp, GenericUploadResult, extractErrorMessage } from '../services/api'
 
 interface Props {
   appId: string
@@ -139,7 +139,8 @@ export default function GenericApp({ appId, appName, appConfig }: Props) {
           },
         ])
       } else {
-        const errMsg = (typeof detail === 'string' ? detail : detail?.message) || err.message
+        // Use unified error extraction to handle all backend error formats
+        const errMsg = extractErrorMessage(err, 'Request failed')
         setMessages(prev => [
           ...prev,
           { role: 'assistant', content: `Error: ${errMsg}` },

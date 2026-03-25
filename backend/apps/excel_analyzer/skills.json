@@ -1,0 +1,12 @@
+{
+  "items": [
+    "When building file-handling chat apps, always check for uploaded files in messages and explicitly read/process them before passing to LLM context",
+    "Enable file_upload UI feature explicitly via update_app_features when the app needs to accept file uploads",
+    "Store uploaded file data in session dictionaries and reference them in handle_chat using session IDs from messages",
+    "Inject Excel/file data into system prompts to provide context for LLM analysis rather than relying on raw file references",
+    "Use incremental file reading for large files to handle size constraints in read tool",
+    "When debugging file upload issues, verify handle_chat actually reads file data from messages and sessions, not just forwards them"
+  ],
+  "updated_at": "2026-03-23T06:38:34.999445",
+  "session_count": 1
+}

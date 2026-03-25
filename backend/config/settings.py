@@ -14,10 +14,22 @@ class LLMSettings(BaseSettings):
     api_base: Optional[str] = None
     model: str = ""
     temperature: float = 0.01
-    max_tokens: int = 4096
+    max_tokens: int = 8192
 
     class Config:
         env_prefix = "LLM_"
+
+
+class FastLLMSettings(BaseSettings):
+    """Fast LLM provider configuration (for lightweight tasks like naming, metadata extraction)."""
+    api_key: str = ""
+    api_base: Optional[str] = None
+    model: str = ""
+    temperature: float = 0.7
+    max_tokens: int = 20000
+
+    class Config:
+        env_prefix = "FAST_LLM_"
 
 
 class ASRSettings(BaseSettings):
@@ -33,7 +45,7 @@ class ASRSettings(BaseSettings):
 
 class PlatformSettings(BaseSettings):
     """Platform-level settings."""
-    app_name: str = "OpenShrimp"
+    app_name: str = "AppShrimp"
     debug: bool = False
     host: str = "0.0.0.0"
     port: int = 8000
@@ -59,6 +71,7 @@ class AuthSettings(BaseSettings):
 
 # Singleton instances
 llm_settings = LLMSettings()
+fast_llm_settings = FastLLMSettings()
 asr_settings = ASRSettings()
 platform_settings = PlatformSettings()
 auth_settings = AuthSettings()

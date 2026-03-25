@@ -31,6 +31,29 @@ api.interceptors.response.use(
   }
 )
 
+// ─── Unified Error Extraction ───
+// FastAPI HTTPException returns {detail: "..."} or {detail: {message: "...", ...}}
+// Some app APIs return {success: false, message: "..."} or {error: "..."}
+// This function normalizes all formats into a single error message string.
+
+export function extractErrorMessage(err: any, fallback = 'An unexpected error occurred'): string {
+  // Axios error with response
+  if (err?.response?.data) {
+    const data = err.response.data
+    // FastAPI HTTPException: {detail: "string"}
+    if (typeof data.detail === 'string') return data.detail
+    // FastAPI structured error: {detail: {message: "...", ...}}
+    if (data.detail && typeof data.detail === 'object' && data.detail.message) return data.detail.message
+    // Custom API: {message: "..."}
+    if (typeof data.message === 'string') return data.message
+    // Custom API: {error: "..."}
+    if (typeof data.error === 'string') return data.error
+  }
+  // Standard JS Error
+  if (err?.message) return err.message
+  return fallback
+}
+
 // ─── Types ───
 
 export interface AppInfo {
@@ -207,14 +230,15 @@ export async function generateAppStream(
   appId?: string,
   baseAppId?: string,
   onEvent?: (event: AgentEvent) => void,
+  mode?: string,
 ): Promise<void> {
-  console.log('[generateAppStream] starting', { appId, descLen: description.length })
+  console.log('[generateAppStream] starting', { appId, descLen: description.length, mode })
   let response: Response
   try {
     response = await fetch('/api/agent/generate', {
       method: 'POST',
       headers: _authHeaders(),
-      body: JSON.stringify({ description, app_id: appId, base_app_id: baseAppId }),
+      body: JSON.stringify({ description, app_id: appId, base_app_id: baseAppId, mode: mode || 'chat' }),
     })
   } catch (fetchErr: any) {
     console.error('[generateAppStream] fetch failed:', fetchErr)

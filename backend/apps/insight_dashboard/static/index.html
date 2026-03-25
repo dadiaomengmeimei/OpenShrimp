@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📊 数据洞察仪表盘 | Insight Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+        
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .upload-zone {
+            border: 3px dashed #cbd5e1;
+            transition: all 0.3s ease;
+        }
+        
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: #6366f1;
+            background: rgba(99, 102, 241, 0.05);
+        }
+        
+        .stat-card {
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+        }
+        
+        .nine-grid-cell {
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .nine-grid-cell:hover {
+            transform: scale(1.02);
+            z-index: 10;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        }
+        
+        .insight-item {
+            animation: slideIn 0.5s ease-out;
+        }
+        
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(-20px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #6366f1;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.5s ease-out;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        .tab-btn.active {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+        }
+        
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+        
+        .gradient-text {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-6">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <header class="glass-panel rounded-2xl p-6 mb-6 shadow-xl">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-4">
+                    <div class="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center text-white text-2xl">
+                        <i class="fas fa-chart-line"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-2xl font-bold gradient-text">数据洞察仪表盘</h1>
+                        <p class="text-gray-500 text-sm">Excel 数据分析与可视化 | AI 驱动洞察</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button onclick="resetApp()" class="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors">
+                        <i class="fas fa-redo mr-2"></i>重置
+                    </button>
+                    <a href="#" onclick="showHelp()" class="px-4 py-2 bg-indigo-100 text-indigo-600 rounded-lg hover:bg-indigo-200 transition-colors">
+                        <i class="fas fa-question-circle mr-2"></i>帮助
+                    </a>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Left Panel: Upload & Data Info -->
+            <div class="lg:col-span-1 space-y-6">
+                <!-- Upload Zone -->
+                <div class="glass-panel rounded-2xl p-6 shadow-lg">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-cloud-upload-alt text-indigo-500 mr-2"></i>
+                        上传数据文件
+                    </h2>
+                    
+                    <div id="uploadZone" class="upload-zone rounded-xl p-8 text-center cursor-pointer">
+                        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="hidden">
+                        <div class="text-5xl mb-4 text-gray-300">
+                            <i class="fas fa-file-excel"></i>
+                        </div>
+                        <p class="text-gray-600 mb-2">点击或拖拽文件到此处</p>
+                        <p class="text-gray-400 text-sm">支持 Excel (.xlsx, .xls) 和 CSV 格式</p>
+                    </div>
+                    
+                    <div id="fileInfo" class="hidden mt-4 p-4 bg-green-50 rounded-lg">
+                        <div class="flex items-center gap-3">
+                            <i class="fas fa-check-circle text-green-500 text-xl"></i>
+                            <div class="flex-1">
+                                <p id="fileName" class="font-medium text-gray-800"></p>
+                                <p id="fileStats" class="text-sm text-gray-500"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Data Stats -->
+                <div id="dataStats" class="hidden glass-panel rounded-2xl p-6 shadow-lg">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-database text-indigo-500 mr-2"></i>
+                        数据统计
+                    </h2>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="stat-card bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4">
+                            <p class="text-blue-600 text-sm font-medium">记录数</p>
+                            <p id="statRows" class="text-2xl font-bold text-blue-800">-</p>
+                        </div>
+                        <div class="stat-card bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4">
+                            <p class="text-purple-600 text-sm font-medium">字段数</p>
+                            <p id="statCols" class="text-2xl font-bold text-purple-800">-</p>
+                        </div>
+                        <div class="stat-card bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-4">
+                            <p class="text-green-600 text-sm font-medium">数值字段</p>
+                            <p id="statNumeric" class="text-2xl font-bold text-green-800">-</p>
+                        </div>
+                        <div class="stat-card bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-4">
+                            <p class="text-orange-600 text-sm font-medium">文本字段</p>
+                            <p id="statText" class="text-2xl font-bold text-orange-800">-</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div id="actionButtons" class="hidden glass-panel rounded-2xl p-6 shadow-lg">
+                    <h2 class="text-lg font-semibold mb-4">分析操作</h2>
+                    <div class="space-y-3">
+                        <button onclick="runAnalysis()" id="btnAnalyze" class="w-full py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl font-medium hover:shadow-lg transition-all flex items-center justify-center gap-2">
+                            <i class="fas fa-brain"></i>
+                            <span>AI 数据洞察</span>
+                        </button>
+                        <button onclick="generateCharts()" id="btnCharts" class="w-full py-3 bg-gradient-to-r from-blue-500 to-cyan-600 text-white rounded-xl font-medium hover:shadow-lg transition-all flex items-center justify-center gap-2">
+                            <i class="fas fa-chart-bar"></i>
+                            <span>生成统计图表</span>
+                        </button>
+                        <button onclick="generateNineGrid()" id="btnNineGrid" class="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-xl font-medium hover:shadow-lg transition-all flex items-center justify-center gap-2">
+                            <i class="fas fa-th"></i>
+                            <span>九宫格分析</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel: Results -->
+            <div class="lg:col-span-2">
+                <!-- Welcome State -->
+                <div id="welcomeState" class="glass-panel rounded-2xl p-12 shadow-lg text-center">
+                    <div class="text-6xl mb-6 text-indigo-200">
+                        <i class="fas fa-chart-pie"></i>
+                    </div>
+                    <h2 class="text-2xl font-bold text-gray-800 mb-3">开始数据探索之旅</h2>
+                    <p class="text-gray-500 mb-8 max-w-md mx-auto">
+                        上传 Excel 或 CSV 文件，我们将为您自动生成数据洞察、统计图表和九宫格战略分析
+                    </p>
+                    <div class="flex justify-center gap-6 text-gray-400">
+                        <div class="text-center">
+                            <i class="fas fa-upload text-2xl mb-2"></i>
+                            <p class="text-sm">上传文件</p>
+                        </div>
+                        <div class="text-2xl">→</div>
+                        <div class="text-center">
+                            <i class="fas fa-cogs text-2xl mb-2"></i>
+                            <p class="text-sm">AI分析</p>
+                        </div>
+                        <div class="text-2xl">→</div>
+                        <div class="text-center">
+                            <i class="fas fa-file-alt text-2xl mb-2"></i>
+                            <p class="text-sm">获取报告</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Loading State -->
+                <div id="loadingState" class="hidden glass-panel rounded-2xl p-12 shadow-lg text-center">
+                    <div class="loading-spinner mx-auto mb-4"></div>
+                    <p id="loadingText" class="text-gray-600">正在分析数据...</p>
+                </div>
+
+                <!-- Results Tabs -->
+                <div id="resultsPanel" class="hidden">
+                    <!-- Tab Buttons -->
+                    <div class="flex gap-2 mb-4 overflow-x-auto pb-2">
+                        <button onclick="switchTab('insights')" id="tab-insights" class="tab-btn active px-4 py-2 rounded-lg font-medium text-sm transition-all whitespace-nowrap">
+                            <i class="fas fa-lightbulb mr-1"></i>数据洞察
+                        </button>
+                        <button onclick="switchTab('charts')" id="tab-charts" class="tab-btn px-4 py-2 bg-white rounded-lg font-medium text-sm text-gray-600 hover:bg-gray-50 transition-all whitespace-nowrap">
+                            <i class="fas fa-chart-area mr-1"></i>统计图表
+                        </button>
+                        <button onclick="switchTab('ninegrid')" id="tab-ninegrid" class="tab-btn px-4 py-2 bg-white rounded-lg font-medium text-sm text-gray-600 hover:bg-gray-50 transition-all whitespace-nowrap">
+                            <i class="fas fa-th-large mr-1"></i>九宫格分析
+                        </button>
+                        <button onclick="switchTab('raw')" id="tab-raw" class="tab-btn px-4 py-2 bg-white rounded-lg font-medium text-sm text-gray-600 hover:bg-gray-50 transition-all whitespace-nowrap">
+                            <i class="fas fa-table mr-1"></i>原始数据
+                        </button>
+                    </div>
+
+                    <!-- Tab Content: Insights -->
+                    <div id="content-insights" class="tab-content glass-panel rounded-2xl p-6 shadow-lg">
+                        <div class="flex justify-between items-center mb-6">
+                            <h2 class="text-xl font-bold gradient-text">AI 数据洞察</h2>
+                            <button onclick="exportReport()" class="px-4 py-2 bg-indigo-100 text-indigo-600 rounded-lg hover:bg-indigo-200 transition-colors text-sm">
+                                <i class="fas fa-download mr-2"></i>导出报告
+                            </button>
+                        </div>
+                        
+                        <div id="insightsContainer" class="space-y-6">
+                            <!-- Insights will be inserted here -->
+                        </div>
+                    </div>
+
+                    <!-- Tab Content: Charts -->
+                    <div id="content-charts" class="tab-content hidden glass-panel rounded-2xl p-6 shadow-lg">
+                        <h2 class="text-xl font-bold gradient-text mb-6">统计图表</h2>
+                        <div id="chartsContainer" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <!-- Charts will be inserted here -->
+                        </div>
+                    </div>
+
+                    <!-- Tab Content: Nine Grid -->
+                    <div id="content-ninegrid" class="tab-content hidden glass-panel rounded-2xl p-6 shadow-lg">
+                        <h2 class="text-xl font-bold gradient-text mb-2">九宫格战略分析</h2>
+                        <p id="nineGridSubtitle" class="text-gray-500 text-sm mb-6">-</p>
+                        
+                        <div class="relative">
+                            <!-- Axis Labels -->
+                            <div class="absolute -left-8 top-1/2 -rotate-90 text-sm font-medium text-gray-500" id="yAxisLabel">Y轴</div>
+                            <div class="absolute bottom-[-30px] left-1/2 -translate-x-1/2 text-sm font-medium text-gray-500" id="xAxisLabel">X轴</div>
+                            
+                            <!-- Nine Grid -->
+                            <div class="grid grid-cols-3 gap-2 aspect-square max-w-2xl mx-auto">
+                                <!-- Row 1: High Y -->
+                                <div class="nine-grid-cell bg-red-50 border-2 border-red-200 rounded-xl p-4" data-position="high_low">
+                                    <div class="text-xs font-medium text-red-600 mb-2">问题型 (左上方)</div>
+                                    <div class="nine-grid-items space-y-1 text-xs"></div>
+                                </div>
+                                <div class="nine-grid-cell bg-yellow-50 border-2 border-yellow-200 rounded-xl p-4" data-position="high_mid">
+                                    <div class="text-xs font-medium text-yellow-600 mb-2">观察型 (中上方)</div>
+                                    <div class="nine-grid-items space-y-1 text-xs"></div>
+                                </div>
+                                <div class="nine-grid-cell bg-green-50 border-2 border-green-200 rounded-xl p-4" data-position="high_high">
+                                    <div class="text-xs font-medium text-green-600 mb-2">明星型 (右上方)</div>
+                                    <div class="nine-grid-items space-y-1 text-xs"></div>
+                                </div>
+                                
+                                <!-- Row 2: Mid Y -->
+                                <div class="nine-grid-cell bg-orange-50 border-2 border-orange-200 rounded-xl p-4" data-position="mid_low">
+                                    <div class="text-xs font-medium text-orange-600 mb-2">调整型 (左中方)</div>
+                                    <div class="nine-grid-items space-y-1 text-xs"></div>
+                                </div>
+                                <div class="nine-grid-cell bg-blue-50 border-2 border-blue-200 rounded-xl p-4" data-position="mid_mid">
+                                    <div class="text-xs font-medium text-blue-600 mb-2">平衡型 (中心)</div>
+                                    <div class="nine-grid-items space-y-1 text-xs"></div>
+                                </div>
+                                <div class="nine-grid-cell bg-teal-50 border-2 border-teal-200 rounded-xl p-4" data-position="mid_high">
+                                    <div class="text-xs font-medium text-teal-600 mb-2">潜力型 (右中方)</div>
+                                    <div class="nine-grid-items space-y-1 text-xs"></div>
+                                </div>
+                                
+                                <!-- Row 3: Low Y -->
+                                <div class="nine-grid-cell bg-gray-50 border-2 border-gray-200 rounded-xl p-4" data-position="low_low">
+                                    <div class="text-xs font-medium text-gray-600 mb-2">淘汰型 (左下方)</div>
+                                    <div class="nine-grid-items space-y-1 text-xs"></div>
+                                </div>
+                                <div class="nine-grid-cell bg-purple-50 border-2 border-purple-200 rounded-xl p-4" data-position="low_mid">
+                                    <div class="text-xs font-medium text-purple-600 mb-2">维持型 (中下方)</div>
+                                    <div class="nine-grid-items space-y-1 text-xs"></div>
+                                </div>
+                                <div class="nine-grid-cell bg-indigo-50 border-2 border-indigo-200 rounded-xl p-4" data-position="low_high">
+                                    <div class="text-xs font-medium text-indigo-600 mb-2">改进型 (右下方)</div>
+                                    <div class="nine-grid-items space-y-1 text-xs"></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-8 p-4 bg-gray-50 rounded-xl">
+                            <h3 class="font-medium text-gray-700 mb-2">九宫格说明</h3>
+                            <p class="text-sm text-gray-500">
+                                九宫格分析基于两个关键指标将数据划分为9个象限，帮助识别高价值项目、问题项目和发展潜力项目。
+                                横轴和纵轴分别代表不同的业务指标，通过交叉分析发现数据中的模式和机会。
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Tab Content: Raw Data -->
+                    <div id="content-raw" class="tab-content hidden glass-panel rounded-2xl p-6 shadow-lg overflow-hidden">
+                        <h2 class="text-xl font-bold gradient-text mb-4">原始数据预览</h2>
+                        <div class="overflow-x-auto">
+                            <table id="rawDataTable" class="w-full text-sm">
+                                <thead class="bg-gray-50">
+                                    <tr id="rawDataHeader"></tr>
+                                </thead>
+                                <tbody id="rawDataBody"></tbody>
+                            </table>
+                        </div>
+                        <p class="text-gray-400 text-xs mt-4">* 仅显示前20条记录</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-6 right-6 transform translate-y-20 opacity-0 transition-all duration-300 z-50">
+        <div class="bg-gray-800 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3">
+            <i id="toastIcon" class="fas fa-check-circle text-green-400"></i>
+            <span id="toastMessage">操作成功</span>
+        </div>
+    </div>
+
+    <script>
+        // State management
+        let appState = {
+            filePath: null,
+            fileName: null,
+            data: null,
+            insights: null,
+            charts: null,
+            nineGrid: null
+        };
+
+        // API base URL
+        const API_BASE = '/api/apps/insight_dashboard';
+
+        // DOM Elements
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const dataStats = document.getElementById('dataStats');
+        const actionButtons = document.getElementById('actionButtons');
+        const welcomeState = document.getElementById('welcomeState');
+        const loadingState = document.getElementById('loadingState');
+        const resultsPanel = document.getElementById('resultsPanel');
+
+        // Upload zone events
+        uploadZone.addEventListener('click', () => fileInput.click());
+        
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+        
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragover');
+        });
+        
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFileUpload(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFileUpload(e.target.files[0]);
+            }
+        });
+
+        async function handleFileUpload(file) {
+            showLoading('正在上传文件...');
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const response = await fetch(`${API_BASE}/upload`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    appState.filePath = result.file_path;
+                    appState.fileName = result.data.file_name;
+                    appState.data = result.data;
+                    
+                    // Update UI
+                    document.getElementById('fileName').textContent = result.data.file_name;
+                    document.getElementById('fileStats').textContent = 
+                        `${result.data.row_count} 条记录 · ${result.data.column_count} 个字段`;
+                    
+                    fileInfo.classList.remove('hidden');
+                    dataStats.classList.remove('hidden');
+                    actionButtons.classList.remove('hidden');
+                    
+                    // Update stats
+                    document.getElementById('statRows').textContent = result.data.row_count;
+                    document.getElementById('statCols').textContent = result.data.column_count;
+                    
+                    // Populate raw data table
+                    populateRawData(result.data);
+                    
+                    showToast('文件上传成功！', 'success');
+                    hideLoading();
+                    
+                    // Auto run analysis
+                    setTimeout(() => runAnalysis(), 500);
+                } else {
+                    throw new Error(result.error || '上传失败');
+                }
+            } catch (error) {
+                hideLoading();
+                showToast('上传失败: ' + error.message, 'error');
+            }
+        }
+
+        function populateRawData(data) {
+            const headerRow = document.getElementById('rawDataHeader');
+            const tableBody = document.getElementById('rawDataBody');
+            
+            headerRow.innerHTML = data.headers.map(h => 
+                `<th class="px-4 py-3 text-left font-medium text-gray-700">${h}</th>`
+            ).join('');
+            
+            tableBody.innerHTML = data.sample_data.map(row => 
+                `<tr class="border-b border-gray-100 hover:bg-gray-50">${
+                    data.headers.map(h => 
+                        `<td class="px-4 py-3 text-gray-600">${row[h] ?? '-'}</td>`
+                    ).join('')
+                }</tr>`
+            ).join('');
+        }
+
+        async function runAnalysis() {
+            if (!appState.filePath) return;
+            
+            showLoading('正在生成 AI 数据洞察...');
+            
+            try {
+                const formData = new FormData();
+                formData.append('file_path', appState.filePath);
+                formData.append('analysis_type', 'comprehensive');
+                
+                const response = await fetch(`${API_BASE}/analyze`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    appState.insights = result.insights;
+                    displayInsights(result.insights);
+                    
+                    // Update numeric stats if available
+                    if (result.stats) {
+                        const numericCount = Object.keys(result.stats).length;
+                        document.getElementById('statNumeric').textContent = numericCount;
+                        document.getElementById('statText').textContent = 
+                            appState.data.column_count - numericCount;
+                    }
+                    
+                    showResults();
+                    showToast('数据洞察生成完成！', 'success');
+                } else {
+                    throw new Error(result.error || '分析失败');
+                }
+            } catch (error) {
+                showToast('分析失败: ' + error.message, 'error');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function displayInsights(insights) {
+            const container = document.getElementById('insightsContainer');
+            
+            const sections = [
+                { key: 'overview', title: '数据概览', icon: 'fa-eye', color: 'blue' },
+                { key: 'key_findings', title: '关键发现', icon: 'fa-key', color: 'yellow' },
+                { key: 'trends', title: '趋势分析', icon: 'fa-chart-line', color: 'green' },
+                { key: 'anomalies', title: '异常检测', icon: 'fa-exclamation-triangle', color: 'red' },
+                { key: 'recommendations', title: '建议与行动', icon: 'fa-lightbulb', color: 'purple' },
+                { key: 'risk_factors', title: '风险因素', icon: 'fa-shield-alt', color: 'orange' },
+            ];
+            
+            container.innerHTML = sections.map(section => {
+                const content = insights[section.key];
+                if (!content) return '';
+                
+                let displayContent = '';
+                if (Array.isArray(content)) {
+                    if (content.length === 0) return '';
+                    displayContent = `<ul class="space-y-2">${
+                        content.map(item => `<li class="flex items-start gap-2"><i class="fas fa-check text-${section.color}-500 mt-1"></i><span>${item}</span></li>`).join('')
+                    }</ul>`;
+                } else {
+                    displayContent = `<p class="text-gray-700 leading-relaxed">${content}</p>`;
+                }
+                
+                return `
+                    <div class="insight-item bg-${section.color}-50 rounded-xl p-5 border-l-4 border-${section.color}-400">
+                        <h3 class="font-semibold text-${section.color}-700 mb-3 flex items-center gap-2">
+                            <i class="fas ${section.icon}"></i>
+                            ${section.title}
+                        </h3>
+                        ${displayContent}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function generateCharts() {
+            if (!appState.filePath) return;
+            
+            showLoading('正在生成统计图表...');
+            
+            try {
+                const formData = new FormData();
+                formData.append('file_path', appState.filePath);
+                formData.append('chart_types', 'auto');
+                
+                const response = await fetch(`${API_BASE}/charts`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    appState.charts = result.charts;
+                    displayCharts(result.charts);
+                    switchTab('charts');
+                    showToast('图表生成完成！', 'success');
+                } else {
+                    throw new Error(result.error || '图表生成失败');
+                }
+            } catch (error) {
+                showToast('图表生成失败: ' + error.message, 'error');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function displayCharts(charts) {
+            const container = document.getElementById('chartsContainer');
+            
+            container.innerHTML = charts.map((chart, index) => `
+                <div class="bg-white rounded-xl p-4 shadow-md fade-in" style="animation-delay: ${index * 0.1}s">
+                    <h3 class="font-medium text-gray-700 mb-3">${chart.title}</h3>
+                    <div class="bg-gray-50 rounded-lg overflow-hidden">
+                        ${chart.embed}
+                    </div>
+                    <div class="mt-3 flex justify-end">
+                        ${chart.download}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function generateNineGrid() {
+            if (!appState.filePath) return;
+            
+            showLoading('正在生成九宫格分析...');
+            
+            try {
+                const formData = new FormData();
+                formData.append('file_path', appState.filePath);
+                
+                const response = await fetch(`${API_BASE}/nine-grid`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    appState.nineGrid = result.nine_grid;
+                    displayNineGrid(result.nine_grid);
+                    switchTab('ninegrid');
+                    showToast('九宫格分析完成！', 'success');
+                } else {
+                    throw new Error(result.error || '九宫格生成失败');
+                }
+            } catch (error) {
+                showToast('九宫格生成失败: ' + error.message, 'error');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function displayNineGrid(nineGrid) {
+            // Update axis labels
+            document.getElementById('xAxisLabel').textContent = nineGrid.x_axis;
+            document.getElementById('yAxisLabel').textContent = nineGrid.y_axis;
+            document.getElementById('nineGridSubtitle').textContent = 
+                `基于 "${nineGrid.x_axis}" (横轴) 和 "${nineGrid.y_axis}" (纵轴) 的分析 · 共 ${nineGrid.items_count} 个项目`;
+            
+            // Clear all cells
+            document.querySelectorAll('.nine-grid-items').forEach(el => el.innerHTML = '');
+            
+            // Populate cells
+            Object.entries(nineGrid.grid).forEach(([position, items]) => {
+                const cell = document.querySelector(`[data-position="${position}"]`);
+                if (cell && items.length > 0) {
+                    const itemsContainer = cell.querySelector('.nine-grid-items');
+                    itemsContainer.innerHTML = items.map(item => 
+                        `<div class="bg-white bg-opacity-70 rounded px-2 py-1 truncate" title="${item.name}">
+                            ${item.name}
+                        </div>`
+                    ).join('');
+                }
+            });
+        }
+
+        async function exportReport() {
+            if (!appState.filePath || !appState.insights) {
+                showToast('请先生成数据洞察', 'warning');
+                return;
+            }
+            
+            showLoading('正在生成报告...');
+            
+            try {
+                const formData = new FormData();
+                formData.append('file_path', appState.filePath);
+                formData.append('insights', JSON.stringify(appState.insights));
+                
+                const response = await fetch(`${API_BASE}/export-report`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Create download link
+                    const link = document.createElement('a');
+                    link.href = result.download_link.match(/\(([^)]+)\)/)?.[1] || '#';
+                    link.download = '数据洞察报告.md';
+                    link.click();
+                    
+                    showToast('报告导出成功！', 'success');
+                } else {
+                    throw new Error(result.error || '导出失败');
+                }
+            } catch (error) {
+                showToast('导出失败: ' + error.message, 'error');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function switchTab(tabName) {
+            // Update tab buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+            
+            // Update content
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.add('hidden');
+            });
+            document.getElementById(`content-${tabName}`).classList.remove('hidden');
+        }
+
+        function showResults() {
+            welcomeState.classList.add('hidden');
+            resultsPanel.classList.remove('hidden');
+        }
+
+        function showLoading(text) {
+            document.getElementById('loadingText').textContent = text;
+            welcomeState.classList.add('hidden');
+            resultsPanel.classList.add('hidden');
+            loadingState.classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            loadingState.classList.add('hidden');
+            if (appState.insights || appState.charts || appState.nineGrid) {
+                resultsPanel.classList.remove('hidden');
+            } else {
+                welcomeState.classList.remove('hidden');
+            }
+        }
+
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            const icon = document.getElementById('toastIcon');
+            const msg = document.getElementById('toastMessage');
+            
+            msg.textContent = message;
+            
+            const icons = {
+                success: 'fa-check-circle text-green-400',
+                error: 'fa-times-circle text-red-400',
+                warning: 'fa-exclamation-circle text-yellow-400'
+            };
+            
+            icon.className = `fas ${icons[type] || icons.success}`;
+            
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            
+            setTimeout(() => {
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 3000);
+        }
+
+        function resetApp() {
+            appState = {
+                filePath: null,
+                fileName: null,
+                data: null,
+                insights: null,
+                charts: null,
+                nineGrid: null
+            };
+            
+            fileInput.value = '';
+            fileInfo.classList.add('hidden');
+            dataStats.classList.add('hidden');
+            actionButtons.classList.add('hidden');
+            resultsPanel.classList.add('hidden');
+            welcomeState.classList.remove('hidden');
+            
+            document.querySelectorAll('.nine-grid-items').forEach(el => el.innerHTML = '');
+            document.getElementById('insightsContainer').innerHTML = '';
+            document.getElementById('chartsContainer').innerHTML = '';
+        }
+
+        function showHelp() {
+            alert(`📊 数据洞察仪表盘使用指南
+
+1. 上传Excel或CSV文件
+2. 系统自动解析数据并生成AI洞察
+3. 查看统计图表了解数据分布
+4. 使用九宫格分析进行战略评估
+5. 导出完整分析报告
+
+支持文件格式：.xlsx, .xls, .csv`);
+        }
+    </script>
+</body>
+</html>

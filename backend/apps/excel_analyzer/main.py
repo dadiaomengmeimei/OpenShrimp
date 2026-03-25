@@ -24,8 +24,15 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from backend.core.llm_service import chat_completion
+from backend.core.file_toolkit import format_table_as_markdown
 
 router = APIRouter(prefix="/api/apps/excel_analyzer", tags=["excel_analyzer"])
+
+# Enable file upload UI feature
+try:
+    update_app_features(features=["file_upload"])
+except Exception as e:
+    print(f"[excel_analyzer] Warning: could not enable file_upload feature: {e}")
 
 # ────────────────────────────────────────
 # CJK Font Configuration
@@ -671,9 +678,139 @@ async def suggest_charts(req: AnalyzeRequest):
 
 
 # Chat handler (called by platform router)
-async def handle_chat(messages: list[dict], *, config: Optional[dict] = None) -> str:
+async def handle_chat(messages: list[dict], *, config: Optional[dict] = None) -> str | dict:
+    print(f"[excel_analyzer] handle_chat called | messages_count={len(messages)}")
+    
+    # Get the latest user message
+    user_msg = messages[-1] if messages else {}
+    user_content = user_msg.get("content", "")
+    files = user_msg.get("files") or []  # Handle both missing key and explicit None
+    
+    print(f"[excel_analyzer] user_content={user_content[:100] if user_content else 'empty'}")
+    print(f"[excel_analyzer] files_count={len(files)}")
+    
+    # Track session_id for this conversation
+    session_id = None
+    df = None
+    
+    # Case 1: User uploaded a file
+    uploaded_file_name = None
+    file_preview = None
+    if files:
+        for f in files:
+            file_path = f.get("path", "")
+            file_name = f.get("name", "unknown")
+            uploaded_file_name = file_name
+            print(f"[excel_analyzer] Processing uploaded file: {file_name} at {file_path}")
+            
+            try:
+                ext = Path(file_name).suffix.lower()
+                if ext in (".xlsx", ".xls", ".csv"):
+                    if ext == ".csv":
+                        df = pd.read_csv(file_path)
+                    else:
+                        df = pd.read_excel(file_path)
+                    
+                    # Generate session_id for this file
+                    session_id = uuid.uuid4().hex[:12]
+                    _sessions[session_id] = df
+                    print(f"[excel_analyzer] File parsed successfully | rows={len(df)}, cols={len(df.columns)}")
+                    
+                    # Generate preview for display
+                    preview_df = df.head(10)
+                    headers = list(preview_df.columns)
+                    rows = [list(row) for row in preview_df.values]
+                    file_preview = {
+                        "rows": len(df),
+                        "columns": list(df.columns),
+                        "numeric_columns": list(df.select_dtypes(include=["number"]).columns),
+                        "headers": headers,
+                        "preview_rows": rows,
+                    }
+                else:
+                    return {"content": f"暂不支持的文件类型: {ext}。请上传 .xlsx, .xls 或 .csv 文件。"}
+            except Exception as e:
+                print(f"[excel_analyzer] ERROR parsing file: {type(e).__name__}: {e}")
+                return {"content": f"读取文件失败: {type(e).__name__}: {e}"}
+    
+    # Case 2: No new file, but check for session_id in config or message
+    if df is None:
+        # Try to get session_id from config
+        if config and config.get("session_id"):
+            session_id = config["session_id"]
+            df = _sessions.get(session_id)
+            print(f"[excel_analyzer] Using existing session | session_id={session_id}, df_found={df is not None}")
+        elif config and config.get("data"):
+            # Sometimes config might contain data directly
+            df = config["data"]
+            print(f"[excel_analyzer] Using data from config")
+    
+    # Build dataset info for LLM
+    dataset_info = ""
+    if df is not None:
+        # Limit data to avoid token limits
+        preview_df = df.head(20)
+        dataset_info = f"""
+【已上传数据概览】
+- 文件名: {files[0].get('name', 'unknown') if files else 'N/A'}
+- 行数: {len(df)}
+- 列数: {len(df.columns)}
+- 列名: {list(df.columns)}
+- 数据类型:\n{df.dtypes.to_string()}
+- 数据预览（前20行）:\n{preview_df.to_string()}
+- 基本统计:\n{df.describe(include='all').to_string()}
+"""
+    else:
+        dataset_info = "\n（暂无上传数据）"
+    
+    # Build system prompt with data context
     system_msg = {
         "role": "system",
-        "content": "You are an Excel data analysis assistant. Help users understand and analyze their data. Reply in the same language the user uses.",
+        "content": f"""你是一个专业的 Excel 数据分析助手。用户会上传 Excel/CSV 文件，你可以帮助他们：
+1. 分析数据结构和建议
+2. 回答关于数据的问题
+3. 提供数据洞察和统计摘要
+4. 解释数据中的模式和趋势
+
+{dataset_info}
+
+请用中文回复。"""
     }
-    return await chat_completion([system_msg] + messages)
+    
+    # Call LLM with context
+    try:
+        response = await chat_completion([system_msg] + messages)
+        print(f"[excel_analyzer] LLM response length: {len(response)}")
+        
+        # Build response with preview for new file uploads
+        response_text = response
+        
+        # If this is a new file upload, prepend the preview to the response
+        if file_preview and (not user_content.strip() or len(user_content.strip()) < 10):
+            preview_md = format_table_as_markdown(
+                file_preview["headers"],
+                file_preview["preview_rows"]
+            )
+            response_text = f"""✅ **文件已上传！**
+
+📊 **数据概览：**
+- 文件名：{uploaded_file_name}
+- 行数：{file_preview['rows']}
+- 列数：{len(file_preview['columns'])}
+- 数值列：{', '.join(file_preview['numeric_columns']) if file_preview['numeric_columns'] else '无'}
+
+📋 **数据预览：**
+{preview_md}
+
+---
+
+{response}"""
+        
+        # If we created a new session, include it in the response
+        result = {"content": response_text}
+        if session_id:
+            result["session_id"] = session_id
+        return result
+    except Exception as e:
+        print(f"[excel_analyzer] ERROR calling LLM: {type(e).__name__}: {e}")
+        return {"content": f"分析失败: {type(e).__name__}: {e}"}

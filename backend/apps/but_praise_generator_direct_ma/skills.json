@@ -1,0 +1,11 @@
+{
+  "items": [
+    "Import `parse_docx` from `backend.core.file_toolkit` to extract text from Word documents in file upload features.",
+    "Enable file upload UI via `update_app_features` before modifying backend handlers to ensure frontend-backend synchronization.",
+    "Create dedicated system prompts for file content that analyze document themes and structure before generating responses.",
+    "Support UTF-8 encoded .txt files and .docx formats when implementing document content extraction.",
+    "Route file attachments through content extraction pipelines in `handle_chat` using conditional logic before LLM processing."
+  ],
+  "updated_at": "2026-03-23T09:19:42.183574",
+  "session_count": 2
+}

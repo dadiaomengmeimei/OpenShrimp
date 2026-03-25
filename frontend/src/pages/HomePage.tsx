@@ -111,8 +111,8 @@ export default function HomePage() {
               🦐
             </div>
             <div>
-              <h1 className="text-xl font-bold text-white">OpenShrimp</h1>
-              <p className="text-xs text-slate-400">Open-source AI App Store</p>
+              <h1 className="text-xl font-bold text-white">AppShrimp</h1>
+              <p className="text-xs text-slate-400">AI App Store</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -200,14 +200,25 @@ export default function HomePage() {
             {filtered.map(app => (
               <div
                 key={app.id}
-                onClick={() => navigate(`/app/${app.id}`)}
+                onClick={() => {
+                  // Web mode apps open in a new browser tab
+                  if (app.config?.mode === 'web') {
+                    const token = localStorage.getItem('auth_token')
+                    const url = token
+                      ? `/api/apps/${app.id}/web?token=${encodeURIComponent(token)}`
+                      : `/api/apps/${app.id}/web`
+                    window.open(url, '_blank')
+                  } else {
+                    navigate(`/app/${app.id}`)
+                  }
+                }}
                 className="group relative bg-slate-800/50 hover:bg-slate-800 border border-slate-700/50 hover:border-slate-600 rounded-2xl p-5 cursor-pointer transition-all hover:shadow-xl hover:shadow-slate-900/50 hover:-translate-y-1"
               >
                 {/* Action buttons */}
                 {canManage(app) && (
                   <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                    {/* Publish/unpublish toggle (only for own apps) */}
-                    {app.author_id === user?.id && (
+                    {/* Publish/unpublish toggle (own apps, unowned apps, or admin) */}
+                    {(app.author_id === user?.id || !app.author_id || user?.is_admin) && (
                       <button
                         onClick={e => handlePublish(e, app)}
                         className={`p-1.5 rounded-lg bg-slate-700/50 transition-colors ${
@@ -251,6 +262,13 @@ export default function HomePage() {
                 {app.is_public && (
                   <span className="absolute top-3 left-3 text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
                     Public
+                  </span>
+                )}
+
+                {/* Web mode badge */}
+                {app.config?.mode === 'web' && (
+                  <span className={`absolute ${app.is_public ? 'top-8' : 'top-3'} left-3 text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-400 border border-cyan-500/20 flex items-center gap-0.5`}>
+                    🌐 Web
                   </span>
                 )}
 

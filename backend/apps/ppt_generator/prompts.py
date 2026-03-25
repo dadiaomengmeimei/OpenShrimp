@@ -175,3 +175,42 @@ EXAMPLE_PPT_OUTPUT_EN = """
   }
 ]
 """
+
+# Prompt for document-based PPT generation
+DOCUMENT_BASED_GENERATION_PROMPT = """基于以下文档内容，创建一个结构清晰、内容完整的PPT演示文稿。
+
+文档主题：{topic}
+风格要求：{style}
+语言：{language}
+幻灯片数量：{slide_count}
+
+文档内容：
+```
+{document_content}
+```
+
+任务要求：
+1. 仔细阅读并分析文档内容，提取关键信息和主要观点
+2. 根据文档结构组织幻灯片内容，确保逻辑清晰
+3. 第一页：标题页（主题 + 简要副标题）
+4. 第二页：内容概览/目录（列出主要章节）
+5. 中间页：根据文档内容分主题展开，每页聚焦一个核心观点
+6. 最后一页：总结与展望/行动建议
+
+内容提炼原则：
+- 不要简单复制原文，要提炼核心观点
+- 用简洁的要点呈现关键信息
+- 保留重要的数据、结论和洞察
+- 适当添加图表建议（在notes中说明）
+- 如果文档包含表格数据，总结其主要发现
+
+返回格式：
+**CRITICAL: You must return ONLY a valid JSON array. Do not include any text before or after the JSON. Do not include markdown formatting like ```json or ```. Just the raw JSON array.**
+
+每个幻灯片对象包含：
+- "title": 幻灯片标题（简洁有力，不超过10个字）
+- "content": 要点数组（每条不超过20个字，3-6条）
+- "notes": 演讲者备注（可选，补充说明或建议）
+
+确保内容忠实于原文档，同时适合演示场景。
+"""
