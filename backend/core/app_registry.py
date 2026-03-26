@@ -17,6 +17,11 @@ from backend.core.database import AppRecord, UserApp, async_session, init_db
 # In-memory cache of loaded app modules
 _loaded_apps: dict[str, object] = {}
 
+# Reference to the FastAPI app instance (set during startup)
+_fastapi_app = None
+# Track which dynamic app routers have been mounted (to avoid duplicates)
+_mounted_routers: set[str] = set()
+
 # Built-in apps (owned by the system, visible to all users)
 BUILTIN_APPS = {
     "excel_analyzer": {
@@ -34,6 +39,66 @@ BUILTIN_APPS = {
         "author": "platform",
     },
 }
+
+
+def set_app(app):
+    """Store a reference to the FastAPI app instance for dynamic router mounting."""
+    global _fastapi_app
+    _fastapi_app = app
+    print(f"[app_registry] FastAPI app reference stored")
+
+
+def _mount_router(app_id: str, mod):
+    """Dynamically mount a sub-app's router onto the FastAPI app.
+    
+    Routes are inserted BEFORE the platform catch-all routes (e.g. /api/apps/{app_id}/upload)
+    so that specific app routes like /api/apps/pdf_summarizer/upload take precedence.
+    """
+    global _fastapi_app
+    if _fastapi_app is None:
+        print(f"[app_registry] ⚠️ Cannot mount router for '{app_id}': no FastAPI app reference")
+        return False
+    if not hasattr(mod, 'router'):
+        print(f"[app_registry] App '{app_id}' has no router attribute, skipping mount")
+        return False
+    if app_id in _mounted_routers:
+        # Already mounted — need to remove old routes and re-mount
+        # FastAPI doesn't support removing routers, so we just skip
+        # The old router object in memory was already replaced by reload
+        print(f"[app_registry] Router for '{app_id}' already mounted (routes will use reloaded module)")
+        return True
+    try:
+        # Record current route count before adding new routes
+        routes_before = len(_fastapi_app.routes)
+        _fastapi_app.include_router(mod.router)
+        routes_after = len(_fastapi_app.routes)
+        new_route_count = routes_after - routes_before
+        
+        if new_route_count > 0:
+            # Move newly added routes BEFORE the platform catch-all routes.
+            # Find the index of the first platform catch-all route (path contains {app_id}).
+            insert_idx = None
+            for i, route in enumerate(_fastapi_app.routes):
+                path = getattr(route, 'path', '')
+                if '{app_id}' in path:
+                    insert_idx = i
+                    break
+            
+            if insert_idx is not None and insert_idx < routes_before:
+                # Extract the newly appended routes and insert them before catch-all
+                new_routes = _fastapi_app.routes[routes_before:]
+                del _fastapi_app.routes[routes_before:]
+                for j, r in enumerate(new_routes):
+                    _fastapi_app.routes.insert(insert_idx + j, r)
+                print(f"[app_registry] ✅ Mounted router for '{app_id}' ({new_route_count} routes, inserted before catch-all at index {insert_idx})")
+            else:
+                print(f"[app_registry] ✅ Mounted router for '{app_id}' ({new_route_count} routes, appended)")
+        
+        _mounted_routers.add(app_id)
+        return True
+    except Exception as e:
+        print(f"[app_registry] ❌ Failed to mount router for '{app_id}': {e}")
+        return False
 
 
 async def initialize():
@@ -305,4 +370,6 @@ def reload_app_module(app_id: str):
     mod = load_app_module(app_id)
     if mod is None:
         raise RuntimeError(f"Failed to reload module for app '{app_id}' — check for syntax/import errors")
+    # 4. Dynamically mount the router onto the FastAPI app
+    _mount_router(app_id, mod)
     return mod

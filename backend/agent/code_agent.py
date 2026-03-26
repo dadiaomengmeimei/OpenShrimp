@@ -1571,7 +1571,7 @@ async function apiCall(url, options) {{
   }});
   if (!res.ok) {{
     const data = await res.json().catch(() => ({{}}));
-    // Handle both FastAPI {detail: "..."} and custom {message: "..."} formats
+    // Handle both FastAPI {{detail: "..."}} and custom {{message: "..."}} formats
     const errMsg = data.message || (typeof data.detail === 'string' ? data.detail : data.detail?.message) || `HTTP ${{res.status}}`;
     throw new Error(errMsg);
   }}

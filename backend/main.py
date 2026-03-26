@@ -23,8 +23,27 @@ async def lifespan(app: FastAPI):
     Path(platform_settings.data_dir).mkdir(parents=True, exist_ok=True)
     await app_registry.initialize()
     await ensure_default_admin()
+    # Store app reference so dynamic apps can mount their routers at runtime
+    app_registry.set_app(app)
+    # Auto-discover and mount routers for all existing dynamic apps
+    await _mount_dynamic_app_routers()
     yield
     # Shutdown (nothing to do for now)
+
+
+async def _mount_dynamic_app_routers():
+    """Discover all registered apps and mount their routers if not already mounted."""
+    all_apps = await app_registry.list_apps(user_id=None)
+    for app_info in all_apps:
+        app_id = app_info["id"]
+        if app_id in app_registry._mounted_routers:
+            continue  # Already mounted (built-in)
+        try:
+            mod = app_registry.load_app_module(app_id)
+            if mod and hasattr(mod, 'router'):
+                app_registry._mount_router(app_id, mod)
+        except Exception as e:
+            print(f"[main] ⚠️ Failed to mount router for dynamic app '{app_id}': {e}")
 
 
 app = FastAPI(
@@ -62,6 +81,12 @@ app.include_router(rag_router)
 app.include_router(db_analyzer_router)
 app.include_router(insight_dashboard_router)
 app.include_router(agent_router)
+
+# Mark built-in/hardcoded app routers as already mounted
+# so that reload_app_module won't try to mount them again
+app_registry._mounted_routers.update([
+    "excel_analyzer", "rag_reader", "db_distribution_analyzer", "insight_dashboard",
+])
 
 # Platform API routes (generic catch-all routes last)
 app.include_router(platform_router)
